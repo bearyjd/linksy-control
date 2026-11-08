@@ -44,5 +44,15 @@ class RateLimiterTest {
         repeat(10) { rl.allow(1) }
         now = 0
         assertFalse(rl.allow(1))
+        now = 10_000 // forward again: only the time since the high-water mark counts
+        assertFalse(rl.allow(1))
+    }
+
+    @Test fun uidsCyclingThroughAFullTableDoNotGetFreshBuckets() {
+        val n = UidRateLimiter.MAX_UIDS + 1
+        var allowed = 0
+        repeat(5) { for (uid in 0 until n) if (rl.allow(uid)) allowed++ }
+        // the first MAX_UIDS uids get one full bucket's first token each; later ones start empty
+        assertTrue(allowed <= UidRateLimiter.MAX_UIDS + 10, "allowed=$allowed")
     }
 }
