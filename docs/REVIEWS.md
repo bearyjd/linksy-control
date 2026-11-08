@@ -65,3 +65,14 @@ Round 4: Codex found one MEDIUM (confirmed by a probe); the opus security review
 | 5 | LOW (security 4, 5, Codex): README overclaim on colluding uids; PinnedUid stale for 10 s after reinstall; client obligations; production constants untested; `BridgeIngress` default clock `{ 0L }` never refills | Fixed. README states what the bucket isolation proves, the possible WRONG_PACKAGE window, re-BEGIN after an ended session and the ~1500 msg/s limit. `PinnedUid` re-resolves a mismatching sender once per second at most. `OWNER_BURST`/`OWNER_PER_SEC` moved to `BridgeIngress` and tests assert 1200 Hz is admitted for a minute and 5000/s trips. `ownerLimiter` has no default. Not done: a `REPLY_ENDED` notification (not trivial; documented instead). |
 
 Defaults chosen: lift duration 1 ms; recheck interval 1 s; re-resolve applies to every mismatching sender (bounded by the interval, not only BEGIN).
+
+## Round 4 addendum
+
+Codex re-reviewed the round 4 delta (dea26cb..5be0c57) and confirmed two more MEDIUMs in the `strokeGone` flag, plus one LOW.
+
+| # | Finding | Disposition |
+|---|---------|-------------|
+| 1 | MEDIUM: `strokeGone` was cleared for every continuing drag before admission, so a move dropped at capacity still cleared it and the later button-up became a phantom touch | Fixed: the flag is cleared only when a move is queued or merged. Test: stroke lost, queue full, move dropped, button-up dispatches nothing. |
+| 2 | MEDIUM: a skipped release (`dispatchedEnd == null`) left `strokeGone` set, so the next independent quick drag (terminal only) was silently dropped | Fixed: skipping a release clears the flag, since the gesture it belonged to is over. Test: drag, swipe, button-up, then a new quick drag dispatches. |
+| 3 | LOW: three ActionQueue tests could not fail (unused local, a single release, no moving release) | Strengthened: a moving 5000 ms release is queued, two releases are supplied, the unused local is gone. |
+| 4 | Privacy: commit 5be0c57 accidentally tracked local tool state (`.omc/STATE.md`, `.omc/state/**`; no secrets) | `.omc/` and `.claude/` are untracked and git-ignored. The files stay in PR history; the squash merge keeps main clean (a force-push would not purge them from GitHub either). |

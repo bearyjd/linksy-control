@@ -55,18 +55,19 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
     fun enqueue(actions: List<Action>, gen: Long = generation) {
         if (gen != generation) return
         for (a in actions) {
-            if (isMove(a)) strokeGone = false
             val last = items.lastOrNull()
             if (a is Action.Drag && isMove(a) && last != null && !last.release && last.generation == gen &&
                 last.action is Action.Drag && isMove(last.action)
             ) {
                 items[items.lastIndex] = last.copy(action = merge(last.action, a))
+                strokeGone = false
             } else if (isTerminalDrag(a) && openStroke()) {
                 items.addLast(Entry(a, gen, release = true)) // may exceed maxQueue by this one release
             } else if (isTerminalDrag(a) && strokeGone) {
                 strokeGone = false // the button-up of a gesture whose stroke is gone: not a new touch
             } else if (items.size < maxQueue) {
                 items.addLast(Entry(a, gen))
+                if (isMove(a)) strokeGone = false // a dropped move must not clear the suppression
             }
         }
     }
@@ -145,7 +146,10 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
             val e = items.removeFirstOrNull() ?: return null
             val a = e.action
             if (e.release) {
-                if (dispatchedEnd == null) continue // nothing is held any more
+                if (dispatchedEnd == null) {
+                    strokeGone = false // the gesture this release belonged to is over
+                    continue // nothing is held any more
+                }
             } else if (e.generation != generation) continue
             if (replacesStroke(a)) {
                 if (dispatchedEnd != null) strokeGone = true
