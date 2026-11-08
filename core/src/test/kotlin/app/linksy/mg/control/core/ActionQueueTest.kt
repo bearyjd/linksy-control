@@ -28,7 +28,7 @@ class ActionQueueTest {
     }
 
     @Test fun releaseWithNoDispatchedStrokeIsDroppedAtEnd() {
-        val release = drag(1f, 2f, continuing = false)
+        q.enqueue(listOf(drag(1f, 2f, continuing = false)))
         q.endSession()
         assertTrue(drain().isEmpty())
     }
@@ -62,6 +62,7 @@ class ActionQueueTest {
 
     @Test fun onlyTheFirstOfTwoReleasesRuns() {
         holdFinger()
+        q.enqueue(listOf(drag(1f, 2f, continuing = false), drag(1f, 2f, continuing = false)))
         q.endSession()
         assertEquals(1, drain().size)
     }
@@ -383,6 +384,7 @@ class ActionQueueTest {
 
     @Test fun aMovingFiveSecondReleaseAtEndBecomesOneStationaryLift() {
         holdFinger()
+        q.enqueue(listOf(Action.Drag(listOf(p(1f), p(9f)), 5000, false)))
         q.endSession()
         val out = drain().map { assertIs<Action.Drag>(it) }
         assertEquals(1, out.size)
@@ -415,5 +417,25 @@ class ActionQueueTest {
         val out = drain()
         assertEquals(ActionQueue.MAX_QUEUE, out.count { it is Action.SetText })
         assertEquals(false, assertIs<Action.Drag>(out.last()).continuing)
+    }
+
+    @Test fun aMoveDroppedAtCapacityDoesNotClearTheSuppressionFlag() {
+        holdFinger()
+        q.strokeLost()
+        repeat(ActionQueue.MAX_QUEUE) { q.enqueue(listOf(tap)) }
+        q.enqueue(listOf(drag(5f, 6f, continuing = true))) // dropped: queue is full
+        drain()
+        q.enqueue(listOf(drag(6f, 7f, continuing = false)))
+        assertNull(q.next())
+    }
+
+    @Test fun aSkippedReleaseDoesNotSuppressTheNextIndependentQuickDrag() {
+        holdFinger()
+        q.enqueue(listOf(swipe, drag(1f, 2f, continuing = false)))
+        assertIs<Action.Swipe>(q.next())
+        assertNull(q.next()) // the release is skipped
+        val quick = drag(3f, 4f, continuing = false)
+        q.enqueue(listOf(quick))
+        assertEquals(quick, q.next())
     }
 }
