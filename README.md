@@ -54,10 +54,13 @@ holding one Linksy `ControlMsg` (`pointer`, `button`, `scroll`, `key`, `text`; f
 sender uid of every message is checked against the open session, and the user's approval is re-read
 from the approval store on every message (INJECT included), so revoking it in Settings ends a live
 session at once. Input outside BEGIN..END is ignored. A session ends on END, after 60 s idle, after
-30 min total, on revoke, when the BEGIN caller's process dies, or when the bridge is unbound.
+30 min total, on revoke, when the BEGIN caller's process dies, or when the last client unbinds (with
+another client still bound, the 60 s idle timeout bounds it).
 BEGIN needs `Message.replyTo` (it is answered there). Messages are rate limited per uid (token
-bucket) before any package or certificate lookup, and at most 32 ordinary actions wait to run; END
-drops them and keeps only the release of a held finger. The pairing dialog ignores touches while
+bucket) before any package or certificate lookup; only BEGIN and non-owner traffic is metered, never the
+authenticated owner's own input. At most 32 actions wait to run, consecutive queued pointer moves are
+coalesced, and END drops everything except the release of a finger that was actually dispatched and is
+still held. Known limitation: actions already queued when the display rotates run in the old coordinates. The pairing dialog ignores touches while
 another window covers it (`filterTouchesWhenObscured`). Source: `app/.../BridgeProtocol.kt`.
 
 ## Layout

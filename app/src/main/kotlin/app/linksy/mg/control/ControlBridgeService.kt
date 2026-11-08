@@ -10,6 +10,7 @@ import android.os.Message
 import android.os.Messenger
 import android.os.SystemClock
 import app.linksy.mg.control.core.AuthDecision
+import app.linksy.mg.control.core.BridgeIngress
 import app.linksy.mg.control.core.BridgeSession
 import app.linksy.mg.control.core.SessionCheck
 import app.linksy.mg.control.core.UidRateLimiter
@@ -25,14 +26,16 @@ import app.linksy.mg.control.core.UidRateLimiter
  */
 class ControlBridgeService : Service() {
     private lateinit var session: BridgeSession
-    private val limiter = UidRateLimiter(SystemClock::elapsedRealtime)
+    private lateinit var ingress: BridgeIngress
     private var owner: IBinder? = null
-    private val death = DeathRecipient { handler.post { endSession() } }
+    private var death: DeathRecipient? = null
+    private var sessionToken = 0L
+    private var destroyed = false
 
     private val handler = object : Handler(Looper.getMainLooper()) {
         override fun handleMessage(msg: Message) {
-            val cost = if (msg.what == BridgeProtocol.MSG_BEGIN) BEGIN_COST else 1.0
-            if (!limiter.allow(msg.sendingUid, cost)) return // flood: dropped before any lookup
+            // Only pre-auth traffic is metered; the owner's own input is bounded by the action queue.
+            if (!ingress.admit(msg.sendingUid, msg.what == BridgeProtocol.MSG_BEGIN)) return
             when (msg.what) {
                 BridgeProtocol.MSG_BEGIN -> begin(msg)
                 BridgeProtocol.MSG_END -> if (isSession(msg)) endSession()
@@ -46,6 +49,7 @@ class ControlBridgeService : Service() {
     override fun onCreate() {
         super.onCreate()
         session = BridgeSession(Graph.approvals(this))
+        ingress = BridgeIngress(session, UidRateLimiter(SystemClock::elapsedRealtime), BEGIN_COST)
         instance = this
     }
 
@@ -59,6 +63,7 @@ class ControlBridgeService : Service() {
     }
 
     override fun onDestroy() {
+        destroyed = true
         endSession()
         instance = null
         super.onDestroy()
@@ -75,33 +80,44 @@ class ControlBridgeService : Service() {
     fun onRevoked() = endSession()
 
     private fun begin(msg: Message) {
+        if (destroyed) return // a retained Messenger must not start a session on a dead service
         val replyTo = msg.replyTo ?: return // cannot answer, so do not start
         val uid = msg.sendingUid
         val pkg = if (uid >= 0) CallerIdentity.packageOfUid(this, uid) else null
         val certs = pkg?.let { CallerIdentity.certsOf(this, it) } ?: emptyList()
         val auth = Graph.auth(this)
         val code = authorize(auth.check(pkg ?: "", certs))
-        reply(msg, code)
         val cert = auth.matchedCert(certs)
-        if (code != BridgeProtocol.RESULT_OK || pkg == null || cert == null) return
-        endSession() // a new session replaces any old one: its held stroke release stays queued
-        try {
-            replyTo.binder.linkToDeath(death, 0)
-        } catch (_: android.os.RemoteException) {
-            return // the caller is already gone
+        if (code != BridgeProtocol.RESULT_OK || pkg == null || cert == null) {
+            reply(replyTo, code)
+            return
         }
-        owner = replyTo.binder
+        endSession() // a new session replaces any old one: its held stroke release stays queued
+        val token = ++sessionToken
+        val binder = replyTo.binder
+        // Per-session recipient: a late death notice for an older owner must not end a newer session.
+        val recipient = DeathRecipient { handler.post { if (sessionToken == token && owner === binder) endSession() } }
+        try {
+            binder.linkToDeath(recipient, 0)
+        } catch (_: android.os.RemoteException) {
+            return // the caller is already gone; nothing was opened and no OK is sent
+        }
+        death = recipient
+        owner = binder
         session.open(uid, pkg, cert)
         ControlAccessibilityService.instance?.beginSession()
+        reply(replyTo, BridgeProtocol.RESULT_OK)
     }
 
     private fun endSession() {
         try {
-            owner?.unlinkToDeath(death, 0)
+            death?.let { owner?.unlinkToDeath(it, 0) }
         } catch (_: NoSuchElementException) {
             // The death notice already unlinked it.
         }
         owner = null
+        death = null
+        sessionToken++ // invalidates any death notice already posted
         if (!session.isOpen()) return
         session.close()
         ControlAccessibilityService.instance?.endSession()
@@ -119,8 +135,7 @@ class ControlBridgeService : Service() {
         }
     }
 
-    private fun reply(msg: Message, code: Int) {
-        val to = msg.replyTo ?: return
+    private fun reply(to: Messenger, code: Int) {
         try {
             to.send(Message.obtain(null, BridgeProtocol.REPLY_BEGIN, code, 0))
         } catch (_: android.os.RemoteException) {
