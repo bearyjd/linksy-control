@@ -8,7 +8,8 @@ package app.linksy.mg.control
  * app.linksy.mg.control/app.linksy.mg.control.PairActivity; RESULT_OK = approved.
  * Messages (Message.what): [MSG_BEGIN], [MSG_END], [MSG_INJECT] with Bundle string [KEY_JSON]
  * holding one Linksy ControlMsg JSON. BEGIN is answered on Message.replyTo with
- * what=[REPLY_BEGIN], arg1=a RESULT_* code.
+ * what=[REPLY_BEGIN], arg1=a RESULT_* code. A BEGIN that is rate limited is
+ * answered with [RESULT_BUSY] (retry later) instead of silence.
  */
 object BridgeProtocol {
     const val ACTION_BIND = "app.linksy.mg.control.BIND"
@@ -26,4 +27,5 @@ object BridgeProtocol {
     const val RESULT_WRONG_CERT = 3
     const val RESULT_NOT_APPROVED = 4
     const val RESULT_ACCESSIBILITY_OFF = 5
+    const val RESULT_BUSY = 6
 }

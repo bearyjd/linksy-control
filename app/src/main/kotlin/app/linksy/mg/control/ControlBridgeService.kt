@@ -9,9 +9,11 @@ import android.os.Looper
 import android.os.Message
 import android.os.Messenger
 import android.os.SystemClock
+import app.linksy.mg.control.core.Admission
 import app.linksy.mg.control.core.AuthDecision
 import app.linksy.mg.control.core.BridgeIngress
 import app.linksy.mg.control.core.BridgeSession
+import app.linksy.mg.control.core.PinnedUid
 import app.linksy.mg.control.core.SessionCheck
 import app.linksy.mg.control.core.UidRateLimiter
 
@@ -22,7 +24,10 @@ import app.linksy.mg.control.core.UidRateLimiter
  * then INJECT or END. Binder.getCallingUid() in onBind is not usable for this, hence per message.
  * The user's approval is re-read from the approval store on every message, so revoking it ends the
  * session at once. A per-uid rate limit runs before any package or certificate lookup, and the
- * session also ends when the BEGIN caller's process dies (onUnbind only fires when every client left).
+ * session also ends when the BEGIN caller's reply binder dies (onUnbind only fires when every client left).
+ * Only the pinned package's uid (resolved from the system, refreshed at most every 10 s) and the
+ * current owner have their own rate bucket; every other uid shares one. The session also ends
+ * when the action engine expires it (idle or maximum duration).
  */
 class ControlBridgeService : Service() {
     private lateinit var session: BridgeSession
@@ -34,8 +39,14 @@ class ControlBridgeService : Service() {
 
     private val handler = object : Handler(Looper.getMainLooper()) {
         override fun handleMessage(msg: Message) {
-            // Only pre-auth traffic is metered; the owner's own input is bounded by the action queue.
-            if (!ingress.admit(msg.sendingUid, msg.what == BridgeProtocol.MSG_BEGIN)) return
+            val isBegin = msg.what == BridgeProtocol.MSG_BEGIN
+            when (ingress.admit(msg.sendingUid, isBegin, isEnd = msg.what == BridgeProtocol.MSG_END)) {
+                Admission.ADMIT -> Unit
+                Admission.DROP -> return
+                Admission.BUSY -> { msg.replyTo?.let { reply(it, BridgeProtocol.RESULT_BUSY) }; return }
+                Admission.WRONG_PACKAGE -> { msg.replyTo?.let { reply(it, BridgeProtocol.RESULT_WRONG_PACKAGE) }; return }
+                Admission.OWNER_OVER_BUDGET -> { endSession(); return } // releases still run
+            }
             when (msg.what) {
                 BridgeProtocol.MSG_BEGIN -> begin(msg)
                 BridgeProtocol.MSG_END -> if (isSession(msg)) endSession()
@@ -49,7 +60,12 @@ class ControlBridgeService : Service() {
     override fun onCreate() {
         super.onCreate()
         session = BridgeSession(Graph.approvals(this))
-        ingress = BridgeIngress(session, UidRateLimiter(SystemClock::elapsedRealtime), BEGIN_COST)
+        val pinned = PinnedUid({ linksyUid() }, SystemClock::elapsedRealtime)
+        val limiter = UidRateLimiter(SystemClock::elapsedRealtime, isPrivileged = { pinned.matches(it) || session.isOwner(it) })
+        val ownerBudget = UidRateLimiter(
+            SystemClock::elapsedRealtime, OWNER_BURST, OWNER_PER_SEC, isPrivileged = { true },
+        )
+        ingress = BridgeIngress(session, limiter, BEGIN_COST, ownerBudget) { pinned.matches(it) }
         instance = this
     }
 
@@ -78,6 +94,16 @@ class ControlBridgeService : Service() {
 
     /** The user revoked approval: end the live session now. */
     fun onRevoked() = endSession()
+
+    /** The action engine expired the session (idle or maximum): the bridge exemption ends with it. */
+    fun onEngineEnded() = endSession()
+
+    /** The uid of the pinned package as the system reports it, or null if it is not installed. */
+    private fun linksyUid(): Int? = try {
+        @Suppress("DEPRECATION") packageManager.getPackageUid(BuildConfig.LINKSY_PACKAGE, 0)
+    } catch (_: android.content.pm.PackageManager.NameNotFoundException) {
+        null
+    }
 
     private fun begin(msg: Message) {
         if (destroyed) return // a retained Messenger must not start a session on a dead service
@@ -145,6 +171,8 @@ class ControlBridgeService : Service() {
 
     companion object {
         private const val BEGIN_COST = 20.0 // a BEGIN costs package and certificate lookups
+        private const val OWNER_BURST = 3000.0 // owner budget: well above a 1000 Hz mouse
+        private const val OWNER_PER_SEC = 1500.0 // sustained rate; beyond it the session ends
 
         /** Set while this service exists, so the settings screen can end a live session on revoke. */
         @Volatile var instance: ControlBridgeService? = null

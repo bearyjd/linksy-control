@@ -59,24 +59,35 @@ Contract (for the Linksy client): bind explicit component `app.linksy.mg.control
 (action `app.linksy.mg.control.BIND`), get a `Messenger`. Pair once with `startActivityForResult`
 (action `app.linksy.mg.control.PAIR`, component `.PairActivity`; `RESULT_OK` = approved). Send
 `Message.what` 1 = BEGIN (reply `what=100`, `arg1` = 0 ok, 1 pairing disabled, 2 wrong package,
-3 wrong cert, 4 not approved, 5 accessibility off), 2 = END, 3 = INJECT with `Bundle` string `json`
+3 wrong cert, 4 not approved, 5 accessibility off, 6 busy = rate limited, retry later), 2 = END, 3 = INJECT with `Bundle` string `json`
 holding one Linksy `ControlMsg` (`pointer`, `button`, `scroll`, `key`, `text`; fractions 0..1). The
 sender uid of every message is checked against the open session, and the user's approval is re-read
 from the approval store on every message (INJECT included), so revoking it in Settings ends a live
 session at once. Input outside BEGIN..END is ignored. A session ends on END, after 60 s idle, after
-30 min total, on revoke, when the BEGIN caller's process dies, or when the last client unbinds (with
-another client still bound, the 60 s idle timeout bounds it).
-BEGIN needs `Message.replyTo` (it is answered there). Messages are rate limited per uid (token
-bucket) before any package or certificate lookup; only BEGIN and non-owner traffic is metered, never the
-authenticated owner's own input. At most 32 actions wait to run, consecutive queued pointer moves are
-coalesced, and END drops everything except the release of a finger that was actually dispatched and is
-still held. Known limitation: actions already queued when the display rotates run in the old coordinates. The pairing dialog ignores touches while
+30 min total, on revoke, when the `replyTo` binder given in BEGIN dies, or when the last client unbinds (with
+another client still bound, the 60 s idle timeout bounds it). The `replyTo` is chosen by the
+caller, so its death is a convenience for cleanup, not proof that the caller is gone; the idle and
+maximum timeouts are the real bound. When the idle or maximum timeout expires a session, the bridge
+session (and with it the owner's exemption below) ends too.
+BEGIN needs `Message.replyTo` (it is answered there). Only the package `app.linksy.mg` is
+looked up: its uid is resolved from the system (refreshed at most every 10 s). A BEGIN from any other
+uid is answered 2 (wrong package) without package or certificate lookups. Only that uid and the
+current session owner have their own rate bucket; all other uids share ONE global bucket, so
+many colluding uids cannot starve the real Linksy. A rate-limited BEGIN is answered 6 (busy). The
+owner's own messages draw on a generous budget (burst 3000, 1500 per second sustained); END is
+never metered, and exceeding the budget ends the session (the held finger is still released)
+instead of dropping single messages. At most 32 actions wait to run. Consecutive queued pointer
+moves are coalesced into one that keeps the path (corners and reversals, at most 64 points) with the
+durations added up (at most 5 s). The release of a held finger is never dropped by the cap (an
+ordinary entry is evicted for it), and END releases a held finger even if no release was queued. A
+tap, long press or scroll replaces the held stroke. END drops everything else. Known limitation:
+actions already queued when the display rotates run in the old coordinates. The pairing dialog ignores touches while
 another window covers it (`filterTouchesWhenObscured`). Source: `app/.../BridgeProtocol.kt`.
 
 ## Layout
 
 - `core/`: pure Kotlin/JVM, all logic and tests (`GestureMapper`, `CallerAuth`, `SessionGate`,
-  `TextEdit`, `ControlEngine`, `ActionQueue`, `BridgeSession`, `UidRateLimiter`).
+  `TextEdit`, `ControlEngine`, `ActionQueue`, `StrokeTracker`, `BridgeSession`, `BridgeIngress`, `UidRateLimiter`, `PinnedUid`).
 - `app/`: thin Android glue (Accessibility service, bridge service, settings and pairing screens).
 
 Build and test with Gradle 8.14 and JDK 17+: `gradle :core:test :app:assembleDebug`. Needs an Android
@@ -89,7 +100,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs `gradle :core:test :app:assembl
 
 ## Verification
 
-`core/` is unit tested (107 tests) and `app/` compiles and passes lint. Nothing has been run on a
+`core/` is unit tested (145 tests) and `app/` compiles and passes lint. Nothing has been run on a
 device, ever: the Accessibility behavior (gestures, set-text, pairing screen, binding) is UNVERIFIED.
 
 See `PRIVACY.md`, `CHANGELOG.md` and `docs/REVIEWS.md`. No LICENSE file yet: the Linksy desktop repo is AGPL-3.0 but the

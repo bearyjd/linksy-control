@@ -31,3 +31,23 @@ Security review (NEW-1..NEW-6) and Codex review of `4660a42`. Still not run on a
 | 4 | Shared DeathRecipient could end a newer session; OK sent before linkToDeath; retained Messenger after destroy | Fixed in the service glue (untested on device): per-session recipient checked against a session token and the owner binder, OK sent only after linkToDeath, `destroyed` flag checked in BEGIN. |
 | 5 | Docs: unbind wording; rotation | Fixed. README states the 60 s idle bound and the rotation limitation (queued actions run in old coordinates). |
 | 6 | Weak tests | Fixed. Forward clock step added after the backwards step; the `gen`-argument test replaced by one using the real call path. |
+
+# Review round 3
+
+Security review and Codex review of `e2dc09c`. Still not run on a device. Earlier wording that END
+"lifts a held finger" overclaimed: in rounds 1 and 2 a full queue could drop the release, a wheel swipe
+could desynchronize the stroke state, and a rejected gesture was recorded as accepted. Those are fixed
+below; the Android behavior itself (that the platform really lifts the finger) remains UNVERIFIED.
+
+| # | Finding | Disposition |
+|---|---------|-------------|
+| 1 | A full queue dropped the button-up release and left the finger down; the next session's first drag got a stale endpoint prefix | Fixed. The release of an open stroke is never dropped by the cap: an ordinary entry is evicted for it. `endSession`/`beginSession` synthesize a stationary release at the last endpoint when none is queued, so an open stroke always has a release and nothing leaks into the next session. Tests in `ActionQueueTest`. |
+| 2 | A wheel swipe replaced the stroke in the service but not in the queue, so END kept a "release" with an old prefix and the service started a new touch-down after END | Fixed. Dispatching a Tap, LongPress or Swipe forgets the endpoint in the queue, and a release is skipped when no stroke is open. A swipe still queued at END does not hide the real release. |
+| 3 | Colluding uids evicted the real Linksy's bucket (0/101 BEGINs) | Fixed. `UidRateLimiter`: only privileged uids (pinned package uid via `PinnedUid`, and the owner) get their own never-evicted bucket; every other uid shares one global bucket. A BEGIN from another uid gets WRONG_PACKAGE without lookups; a rate-limited BEGIN gets the new result code 6 BUSY. `PinnedUid` refreshes at most every 10 s. |
+| 4 | Coalescing kept only the first start and the latest end | Fixed. The merged path keeps the polyline, pruned to 64 points by dropping the points that bend it least (reversals survive), and durations add up, capped at 5 s. |
+| 5 | A rejected `dispatchGesture` left the stroke recorded as valid | Fixed. `StrokeTracker` (core, tested) clears the stroke and the queue endpoint on rejection and on cancel. The service wiring is compile and lint only. |
+| 6 | Owner traffic unmetered; the bridge session outlived engine expiry; main-thread cost | Partly fixed. The bridge session closes when the engine expires it. The owner has a high budget (burst 3000, 1500/s): exceeding it ends the session, with the release synthesized, instead of dropping single messages; END is never metered. Not changed: the per-INJECT approval lookup and JSON parse stay on the main thread; they are bounded by the owner budget. |
+| 7 | README overstated caller-death; weak tests | Fixed. README reworded (the `replyTo` is caller-chosen, so its death is not proof of anything). Churn test asserts the Linksy uid is still admitted; full-cap button-up then END, and non-straight and unequal-duration coalescing are tested. |
+
+Untested glue (needs a device): the `dispatchGesture` rejection path, the bridge/engine expiry hook, the
+`getPackageUid` lookup.
