@@ -444,10 +444,9 @@ class ActionQueueTest {
     @Test fun recoveredStrokeThenIndependentQuickDragIsDispatched() {
         holdFinger(1)
         q.enqueue(listOf(drag(1f, 2f, continuing = true, id = 1)))
-        q.strokeLost() // the platform cancels while the recovered move is still queued
+        q.strokeLost() // the platform cancels while the recovered move is still queued: it is discarded
         q.enqueue(listOf(drag(2f, 3f, continuing = false, id = 1)))
-        val out = drain().map { assertIs<Action.Drag>(it) }
-        assertEquals(listOf(true, false), out.map { it.continuing })
+        assertTrue(drain().isEmpty()) // and the button-up of the lost gesture is dropped
         val quick = drag(7f, 8f, continuing = false, id = 2)
         q.enqueue(listOf(quick))
         assertEquals(quick, q.next())

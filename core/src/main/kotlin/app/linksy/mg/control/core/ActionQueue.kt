@@ -24,6 +24,14 @@ import kotlin.math.hypot
  *   admitted (it starts a fresh stroke, so the gesture is no longer lost) or dispatched, and on
  *   [beginSession]/[endSession]. A terminal drag of any other gesture (an independent quick drag)
  *   is never affected. The release of a stroke that is open is always kept (see above).
+ * - Moves queued before a loss belong to the lost stroke. The rule: when a gesture's stroke is
+ *   replaced or lost, every move of that gesture still waiting in the queue is DISCARDED at that
+ *   moment ([strokeLost] and the dispatch of a Tap, LongPress or Swipe), and the loss epoch is
+ *   bumped; queued moves only merge within the same epoch. Moves admitted after the loss start a
+ *   fresh stroke (the user may still be dragging) and are never merged with pre-loss moves. The
+ *   queued button-up of a lost gesture is still dropped (nothing dispatched after the loss) unless
+ *   post-loss moves started a fresh stroke: then those moves are placed before that queued
+ *   button-up, which dispatches as the release of the fresh stroke, so the finger is never left down.
  * - A queued move (a continuing Drag) directly followed by another is coalesced into one. The merged
  *   path keeps the polyline (corners and reversals) down-sampled to [GestureMapper.MAX_PATH_POINTS]
  *   and the durations add up, capped at [GestureMapper.MAX_SEGMENT_MS]. Button, key, text, END and
@@ -42,7 +50,12 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
         const val MAX_LOST = 8
     }
 
-    private data class Entry(val action: Action, val generation: Long, val release: Boolean = false)
+    private data class Entry(
+        val action: Action,
+        val generation: Long,
+        val release: Boolean = false,
+        val epoch: Long = 0,
+    )
 
     private val items = ArrayDeque<Entry>()
     private var dispatchedEnd: Point? = null
@@ -54,6 +67,9 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
     private val lostGestures = LinkedHashSet<Long>()
 
     val lostGestureCount: Int get() = lostGestures.size
+
+    /** Bumped whenever a stroke is lost; a queued move only merges with moves of the same epoch. */
+    private var lossEpoch = 0L
 
     var generation = 0L
         private set
@@ -68,20 +84,37 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
     fun enqueue(actions: List<Action>, gen: Long = generation) {
         if (gen != generation) return
         for (a in actions) {
-            val last = items.lastOrNull()
-            if (a is Action.Drag && isMove(a) && last != null && !last.release && last.generation == gen &&
-                last.action is Action.Drag && isMove(last.action) && last.action.gestureId == a.gestureId
-            ) {
-                items[items.lastIndex] = last.copy(action = merge(last.action, a))
-                lostGestures.remove(a.gestureId)
+            if (a is Action.Drag && isMove(a)) {
+                admitMove(a, gen)
             } else if (isTerminalDrag(a) && openStroke()) {
-                items.addLast(Entry(a, gen, release = true)) // may exceed maxQueue by this one release
+                items.addLast(Entry(a, gen, release = true, epoch = lossEpoch)) // may exceed maxQueue by this one release
             } else if (a is Action.Drag && isTerminalDrag(a) && lostGestures.remove(a.gestureId)) {
                 // the button-up of a gesture whose stroke is gone: not a new touch
             } else if (items.size < maxQueue) {
-                items.addLast(Entry(a, gen))
-                if (a is Action.Drag && isMove(a)) lostGestures.remove(a.gestureId) // only an admitted move
+                items.addLast(Entry(a, gen, epoch = lossEpoch))
             }
+        }
+    }
+
+    /**
+     * Admits a move: merged into the move before it when that is the same gesture and loss epoch,
+     * else queued (capped). It goes before a queued release of its own gesture, so a fresh stroke
+     * started after a loss is closed by the button-up that was already queued.
+     */
+    private fun admitMove(a: Action.Drag, gen: Long) {
+        val ri = items.indexOfFirst {
+            it.release && it.action is Action.Drag && !it.action.continuing && it.action.gestureId == a.gestureId
+        }
+        val at = if (ri >= 0) ri else items.size
+        val prev = items.getOrNull(at - 1)
+        if (prev != null && !prev.release && prev.generation == gen && prev.epoch == lossEpoch &&
+            prev.action is Action.Drag && isMove(prev.action) && prev.action.gestureId == a.gestureId
+        ) {
+            items[at - 1] = prev.copy(action = merge(prev.action, a))
+            lostGestures.remove(a.gestureId)
+        } else if (items.size < maxQueue) {
+            items.add(at, Entry(a, gen, epoch = lossEpoch))
+            lostGestures.remove(a.gestureId) // only an admitted move
         }
     }
 
@@ -119,6 +152,9 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
             lostGestures.remove(id)
             lostGestures.add(id)
             while (lostGestures.size > MAX_LOST) lostGestures.remove(lostGestures.first())
+            lossEpoch++
+            // moves queued before the loss belong to the lost stroke; they must not start a new one
+            if (id != Action.Drag.NO_GESTURE) items.removeAll { !it.release && it.action is Action.Drag && isMove(it.action) && it.action.gestureId == id }
         }
         openGestureId = null
     }

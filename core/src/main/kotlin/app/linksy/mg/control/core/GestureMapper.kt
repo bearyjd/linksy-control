@@ -57,11 +57,22 @@ class GestureMapper {
     private var lastPointer: FPoint? = null
     private var gesture: Gesture? = null
     private var lastGestureId = Action.Drag.NO_GESTURE // monotonic, never reset
+    private var lastValid: Display? = null // the last display a press or move was accepted on
 
+    /**
+     * A left button-up never depends on display validity: it ends the gesture on [display] if that
+     * is valid, else on the last valid display seen, so a finger that went down is always lifted.
+     * Every other message (press, move, scroll, key) still needs a valid [display].
+     */
     fun handle(json: String, display: Display, nowMs: Long): MapResult {
         if (json.length > MAX_MESSAGE_CHARS) return MapResult(rejected = Reject.TOO_LARGE)
-        if (!display.valid) return MapResult(rejected = Reject.INVALID)
-        val obj = parse(json) ?: return MapResult(rejected = Reject.MALFORMED)
+        if (display.valid) lastValid = display
+        val obj = parse(json)
+        if (!display.valid) {
+            if (obj == null || !isLeftUp(obj)) return MapResult(rejected = Reject.INVALID)
+            return leftUp(lastValid ?: return MapResult(), nowMs)
+        }
+        obj ?: return MapResult(rejected = Reject.MALFORMED)
         val type = obj.string("type") ?: return MapResult(rejected = Reject.MALFORMED)
         return when (type) {
             "pointer" -> pointer(obj, display, nowMs)
@@ -73,18 +84,23 @@ class GestureMapper {
         }
     }
 
-    /** Ends any in-progress gesture (session over). Later button-up events do nothing. */
+    /** Ends any in-progress gesture (session over), on the last valid display if [display] is not. */
     fun release(display: Display, nowMs: Long): List<Action> {
         val g = gesture ?: return emptyList()
         gesture = null
-        if (g.phase != Phase.DRAGGING || !display.valid) return emptyList()
-        return listOf(segment(g, display, nowMs, continuing = false).first)
+        val at = display.takeIf { it.valid } ?: lastValid
+        if (g.phase != Phase.DRAGGING || at == null) return emptyList()
+        return listOf(segment(g, at, nowMs, continuing = false).first)
     }
+
+    private fun isLeftUp(o: JsonObject) =
+        o.string("type") == "button" && o.string("button") == "left" && o.bool("pressed") == false
 
     /** Forgets everything without emitting (a fresh session). */
     fun reset() {
         gesture = null
         lastPointer = null
+        lastValid = null
     }
 
     private fun pointer(o: JsonObject, d: Display, now: Long): MapResult {

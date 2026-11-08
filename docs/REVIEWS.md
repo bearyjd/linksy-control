@@ -88,3 +88,14 @@ Codex's quick check showed the single global `strokeGone` flag is the wrong shap
 
 Tests: both sequences, drag-swipe-button-up and drag-rejected-button-up (no touch), Back/Home/SetText keep the release, a new drag with moves after a swipe releases, recovered stroke then quick drag, END/BEGIN clears the ring, the ring stays bounded (`MAX_LOST` = 8) under a flood, mapper id monotonicity. Residual: a loss older than the last 8 lost gestures is forgotten; a gesture's button-up cannot arrive after 8 later gestures were all lost, because the mapper emits one gesture at a time.
 
+## Round 4 addendum 3
+
+Codex round 7 found two blocking issues in the per-gesture design.
+
+| # | Finding | Disposition |
+|---|---------|-------------|
+| 1 | Stray touch after the user lifted: moves of one gesture queued before a stroke loss were merged with moves queued after it, and a pre-loss move dispatched after the loss started a fresh stroke that the already-queued button-up then ended | Rule (written in the `ActionQueue` KDoc): moves of a gesture queued before its stroke was lost belong to the lost stroke and are discarded at the moment of loss (`strokeLost()` and the dispatch of a Tap, LongPress or Swipe). Entries carry a loss epoch and merge only within one epoch. Moves admitted after the loss start a fresh stroke and are placed before the gesture's queued button-up, which then releases that fresh stroke; without post-loss moves the button-up is dropped. |
+| 2 | Stuck finger: a button-up arriving with an invalid display (e.g. `Display(0,0)`) was rejected before `leftUp()`, so no release was queued | `GestureMapper.handle` lets a left button-up through with an invalid display and builds the terminal on the last valid display it saw; `release()` does the same. Presses, moves, scroll and keys still need a valid display. `ControlEngine` already passes every message to the mapper, so no button-up is swallowed there. |
+
+Tests: lost with no post-loss moves (nothing dispatched), lost with post-loss moves (fresh stroke then release, several moves too), pre-loss moves never dispatched, Swipe replacement variants, other gestures' moves survive; mapper and engine tests for an invalid-display button-up (drag, press, `release()`) and for zero-display press/move still rejected. One existing test (`recoveredStrokeThenIndependentQuickDragIsDispatched`) changed because the rule now discards the pre-loss recovered move. Residual: whether the platform really reports a zero display transiently is unknown; the fix is safe either way.
+
