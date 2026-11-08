@@ -9,6 +9,7 @@ class UidRateLimiter(
     private val clock: () -> Long,
     private val capacity: Double = 200.0,
     private val refillPerSec: Double = 200.0,
+    private val isPrivileged: (Int) -> Boolean = { false },
 ) {
     companion object {
         const val MAX_UIDS = 32

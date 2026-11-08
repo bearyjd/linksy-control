@@ -67,10 +67,10 @@ class ActionQueueTest {
         assertEquals(1, drain().size)
     }
 
-    @Test fun consecutiveMovesCoalesceKeepingStartAndLatestEnd() {
+    @Test fun consecutiveMovesCoalesceIntoOneKeepingThePolyline() {
         q.enqueue(listOf(drag(0f, 1f, true), drag(1f, 2f, true), drag(2f, 3f, true)))
         assertEquals(1, q.size)
-        assertEquals(listOf(p(0f), p(3f)), assertIs<Action.Drag>(q.next()).path)
+        assertEquals(listOf(p(0f), p(1f), p(2f), p(3f)), assertIs<Action.Drag>(q.next()).path)
     }
 
     @Test fun coalescingKeepsEveryNonMoveActionInOrder() {
@@ -80,8 +80,8 @@ class ActionQueueTest {
         val out = drain()
         assertEquals(5, out.size)
         assertEquals(listOf(tap, Action.Back, text), out.subList(1, 4))
-        assertEquals(listOf(p(0f), p(2f)), assertIs<Action.Drag>(out[0]).path)
-        assertEquals(listOf(p(2f), p(4f)), assertIs<Action.Drag>(out[4]).path)
+        assertEquals(listOf(p(0f), p(1f), p(2f)), assertIs<Action.Drag>(out[0]).path)
+        assertEquals(listOf(p(2f), p(3f), p(4f)), assertIs<Action.Drag>(out[4]).path)
     }
 
     @Test fun aMoveFloodCannotStarveLaterButtonsAndKeys() {
@@ -162,4 +162,174 @@ class ActionQueueTest {
         assertEquals(listOf(p(5f), p(6f)), assertIs<Action.Drag>(q.next()).path)
     }
 
+
+    private fun fillWithTaps() = repeat(ActionQueue.MAX_QUEUE) { q.enqueue(listOf(tap)) }
+
+    // --- round 3: release survives the cap, END synthesizes, no stale prefix ---
+
+    @Test fun buttonUpAtAFullCapStillReleasesTheFinger() {
+        holdFinger()
+        fillWithTaps()
+        q.enqueue(listOf(drag(1f, 2f, continuing = false)))
+        assertTrue(q.size <= ActionQueue.MAX_QUEUE)
+        val out = drain()
+        val last = assertIs<Action.Drag>(out.last())
+        assertEquals(false, last.continuing)
+    }
+
+    @Test fun buttonUpAtAFullCapEvictsAnOrdinaryEntryNotAnotherRelease() {
+        holdFinger()
+        fillWithTaps()
+        q.enqueue(listOf(drag(1f, 2f, continuing = false)))
+        assertEquals(ActionQueue.MAX_QUEUE, q.size)
+        assertEquals(ActionQueue.MAX_QUEUE - 1, drain().count { it == tap })
+    }
+
+    @Test fun buttonUpAtAFullCapThenEndStillReleasesExactlyOnce() {
+        holdFinger()
+        fillWithTaps()
+        q.enqueue(listOf(drag(1f, 2f, continuing = false)))
+        q.endSession(emptyList())
+        val out = drain()
+        assertEquals(1, out.size)
+        assertEquals(false, assertIs<Action.Drag>(out.single()).continuing)
+    }
+
+    @Test fun buttonUpForAStrokeOpenedByAQueuedMoveAlsoSurvivesTheCap() {
+        q.enqueue(listOf(drag(0f, 1f, continuing = true)))
+        repeat(ActionQueue.MAX_QUEUE - 1) { q.enqueue(listOf(tap)) }
+        q.enqueue(listOf(drag(1f, 2f, continuing = false)))
+        assertTrue(drain().any { it is Action.Drag && !it.continuing })
+    }
+
+    @Test fun aTerminalDragWithNoOpenStrokeStillCannotEvictAnything() {
+        fillWithTaps()
+        q.enqueue(listOf(drag(1f, 2f, continuing = false)))
+        assertEquals(ActionQueue.MAX_QUEUE, drain().count { it == tap })
+    }
+
+    @Test fun endWithoutAQueuedReleaseSynthesizesAStationaryOne() {
+        holdFinger()
+        q.endSession(emptyList())
+        val out = assertIs<Action.Drag>(q.next())
+        assertEquals(false, out.continuing)
+        assertEquals(listOf(p(1f)), out.path)
+        assertNull(q.next())
+    }
+
+    @Test fun nothingIsSynthesizedWhenNoStrokeIsOpen() {
+        q.endSession(emptyList())
+        assertTrue(drain().isEmpty())
+    }
+
+    @Test fun nextSessionsFirstDragHasNoStalePrefix() {
+        holdFinger()
+        fillWithTaps()
+        q.endSession(emptyList())
+        drain()
+        q.beginSession()
+        q.enqueue(listOf(drag(5f, 6f, continuing = true)))
+        assertEquals(listOf(p(5f), p(6f)), assertIs<Action.Drag>(q.next()).path)
+    }
+
+    @Test fun beginAloneNeverLeavesAnOpenStrokeWithoutARelease() {
+        holdFinger()
+        q.beginSession()
+        val release = assertIs<Action.Drag>(q.next())
+        assertEquals(false, release.continuing)
+        q.enqueue(listOf(drag(5f, 6f, continuing = true)))
+        assertEquals(listOf(p(5f), p(6f)), assertIs<Action.Drag>(q.next()).path)
+    }
+
+    @Test fun dispatchedReleaseClosesTheStroke() {
+        holdFinger()
+        q.endSession(listOf(drag(1f, 2f, continuing = false)))
+        drain()
+        q.endSession(emptyList())
+        assertTrue(drain().isEmpty())
+    }
+
+    // --- round 3: a tap, long press or swipe replaces the held stroke ---
+
+    @Test fun aDispatchedTapSwipeOrLongPressMakesTheLaterTerminalDragNotARelease() {
+        val replacers = listOf(
+            tap,
+            Action.LongPress(Point(1f, 1f), 700),
+            Action.Swipe(Point(0f, 0f), Point(0f, 9f), 200),
+        )
+        for (r in replacers) {
+            val queue = ActionQueue()
+            queue.enqueue(listOf(drag(0f, 1f, continuing = true)))
+            queue.next()
+            queue.enqueue(listOf(r))
+            assertEquals(r, queue.next())
+            queue.endSession(listOf(drag(1f, 2f, continuing = false)))
+            assertNull(queue.next(), "no release without an open stroke after $r")
+        }
+    }
+
+    @Test fun aWheelSwipeStillQueuedAtEndDoesNotHideTheRealRelease() {
+        holdFinger()
+        q.enqueue(listOf(Action.Swipe(Point(0f, 0f), Point(0f, 9f), 200)))
+        q.endSession(listOf(drag(1f, 2f, continuing = false)))
+        val out = drain()
+        assertEquals(1, out.size)
+        assertEquals(listOf(p(1f), p(2f)), assertIs<Action.Drag>(out.single()).path)
+    }
+
+    @Test fun nextDragAfterAWheelSwipeIsNotPrefixedWithTheOldEndpoint() {
+        holdFinger()
+        q.enqueue(listOf(Action.Swipe(Point(0f, 0f), Point(0f, 9f), 200)))
+        q.next()
+        q.enqueue(listOf(drag(5f, 6f, continuing = true)))
+        assertEquals(listOf(p(5f), p(6f)), assertIs<Action.Drag>(q.next()).path)
+    }
+
+    // --- round 3: coalescing keeps the geometry ---
+
+    @Test fun reversalAToBToAKeepsTheTurnaround() {
+        q.enqueue(listOf(drag(0f, 5f, true), drag(5f, 0f, true)))
+        assertEquals(listOf(p(0f), p(5f), p(0f)), assertIs<Action.Drag>(q.next()).path)
+    }
+
+    @Test fun curvesKeepTheirCorners() {
+        val a = Action.Drag(listOf(Point(0f, 0f), Point(10f, 0f)), 10, true)
+        val b = Action.Drag(listOf(Point(10f, 0f), Point(10f, 10f)), 10, true)
+        q.enqueue(listOf(a, b))
+        assertEquals(listOf(Point(0f, 0f), Point(10f, 0f), Point(10f, 10f)), assertIs<Action.Drag>(q.next()).path)
+    }
+
+    @Test fun coalescedDurationsAddUp() {
+        q.enqueue(listOf(
+            Action.Drag(listOf(p(0f), p(1f)), 30, true),
+            Action.Drag(listOf(p(1f), p(2f)), 70, true),
+            Action.Drag(listOf(p(2f), p(3f)), 100, true),
+        ))
+        assertEquals(200L, assertIs<Action.Drag>(q.next()).durationMs)
+    }
+
+    @Test fun coalescedDurationIsCapped() {
+        repeat(5) { i ->
+            q.enqueue(listOf(Action.Drag(listOf(p(i.toFloat()), p(i + 1f)), GestureMapper.MAX_SEGMENT_MS, true)))
+        }
+        assertEquals(GestureMapper.MAX_SEGMENT_MS, assertIs<Action.Drag>(q.next()).durationMs)
+    }
+
+    @Test fun coalescedPathIsBoundedAndKeepsFirstAndLastPoint() {
+        repeat(500) { i -> q.enqueue(listOf(drag(i.toFloat(), i + 1f, true))) }
+        val path = assertIs<Action.Drag>(q.next()).path
+        assertEquals(GestureMapper.MAX_PATH_POINTS, path.size)
+        assertEquals(p(0f), path.first())
+        assertEquals(p(500f), path.last())
+        assertEquals(path.sortedBy { it.y }, path) // downsampling keeps the order
+    }
+
+    @Test fun reversalSurvivesDownsampling() {
+        repeat(200) { i -> q.enqueue(listOf(drag(i.toFloat(), i + 1f, true))) }
+        repeat(200) { i -> q.enqueue(listOf(drag(200f - i, 199f - i, true))) }
+        val path = assertIs<Action.Drag>(q.next()).path
+        assertTrue(path.size <= GestureMapper.MAX_PATH_POINTS)
+        assertTrue(path.maxOf { it.y } >= 190f, "the turnaround must survive")
+        assertEquals(p(0f), path.last())
+    }
 }
