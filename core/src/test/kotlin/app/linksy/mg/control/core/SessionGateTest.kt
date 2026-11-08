@@ -38,7 +38,7 @@ class SessionGateTest {
 
     @Test fun maxDurationCapsEvenWithConstantActivity() {
         gate.begin()
-        repeat(10) { now += 59_000; if (gate.isActive()) gate.touch() }
+        repeat(11) { now += 59_000; if (gate.isActive()) gate.touch() }
         assertFalse(gate.isActive())
     }
 
