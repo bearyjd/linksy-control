@@ -25,6 +25,8 @@ class BridgeSession(private val approvals: ApprovalStore) {
 
     @Synchronized fun isOpen(): Boolean = uid != -1
 
+    @Synchronized fun isOwner(sender: Int): Boolean = uid != -1 && sender == uid
+
     /** REVOKED = this is the owner but the user withdrew approval: the caller must end the session. */
     @Synchronized fun check(sender: Int): SessionCheck = when {
         uid == -1 || sender != uid -> SessionCheck.NOT_OWNER

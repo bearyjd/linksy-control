@@ -81,7 +81,7 @@ class ActionQueueTest {
         assertEquals(5, out.size)
         assertEquals(listOf(tap, Action.Back, text), out.subList(1, 4))
         assertEquals(listOf(p(0f), p(2f)), assertIs<Action.Drag>(out[0]).path)
-        assertEquals(listOf(p(1f), p(2f), p(4f)), assertIs<Action.Drag>(out[4]).path)
+        assertEquals(listOf(p(2f), p(4f)), assertIs<Action.Drag>(out[4]).path)
     }
 
     @Test fun aMoveFloodCannotStarveLaterButtonsAndKeys() {
@@ -131,9 +131,10 @@ class ActionQueueTest {
     }
 
     @Test fun droppedMidDragSegmentIsBridgedFromTheLastDispatchedEndpoint() {
-        val small = ActionQueue(maxQueue = 1)
-        small.enqueue(listOf(drag(0f, 1f, true), drag(1f, 2f, true))) // second dropped (full)
+        val small = ActionQueue(maxQueue = 2)
+        small.enqueue(listOf(drag(0f, 1f, true), tap, drag(1f, 2f, true))) // third dropped (full)
         assertEquals(drag(0f, 1f, true), small.next())
+        assertEquals(tap, small.next())
         small.enqueue(listOf(drag(2f, 3f, true)))
         val next = assertIs<Action.Drag>(small.next())
         assertEquals(listOf(p(1f), p(2f), p(3f)), next.path)

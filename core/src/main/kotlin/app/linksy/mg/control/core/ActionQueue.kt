@@ -5,9 +5,13 @@ package app.linksy.mg.control.core
  *
  * - Every entry carries the session generation it was produced in; [beginSession] and
  *   [endSession] bump it, and an ordinary entry from an older generation is never dispatched.
- * - A "release" is a Drag with `continuing == false`: it lifts a finger that is still down. Releases
- *   are never dropped, by the cap, by END, or by a replacing BEGIN, or the pointer would stay down.
- * - At most [maxQueue] ordinary actions wait; more are dropped (all kinds, not only mid-drag).
+ * - A "release" is a terminal Drag (`continuing == false`) that closes a stroke which was actually
+ *   dispatched and is still open (`dispatchedEnd != null`) when the session ends or is replaced. Only
+ *   those survive END/BEGIN, so a held finger is lifted; they are dropped if the stroke was lost. Any
+ *   other terminal drag is an ordinary action: capped and generation-scoped.
+ * - At most [maxQueue] actions wait; more are dropped (all kinds). A queued move (a continuing Drag)
+ *   directly followed by another is coalesced into one (start of the first, end of the latest), so
+ *   a mouse flood cannot fill the cap and starve button, key, text or END actions, which are never merged.
  * - Android requires a continuing stroke segment to start exactly where the previous dispatched one
  *   ended. If segments were dropped or cleared, the next one is prefixed with the last dispatched
  *   endpoint so the stroke stays continuous.
@@ -17,7 +21,7 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
         const val MAX_QUEUE = 32
     }
 
-    private class Entry(val action: Action, val generation: Long)
+    private data class Entry(val action: Action, val generation: Long, val release: Boolean = false)
 
     private val items = ArrayDeque<Entry>()
     private var dispatchedEnd: Point? = null
@@ -27,30 +31,45 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
 
     val size: Int get() = items.size
 
-    private fun isRelease(a: Action) = a is Action.Drag && !a.continuing
+    private fun isMove(a: Action) = a is Action.Drag && a.continuing
 
-    /** Adds [actions] produced in [gen]. Stale ordinary actions and ones over the cap are dropped. */
+    private fun isTerminalDrag(a: Action) = a is Action.Drag && !a.continuing
+
+    /** Adds [actions] produced in [gen]. Stale actions and ones over the cap are dropped. */
     fun enqueue(actions: List<Action>, gen: Long = generation) {
+        if (gen != generation) return
         for (a in actions) {
-            if (isRelease(a)) {
-                items.addLast(Entry(a, gen))
-            } else if (gen == generation && items.size < maxQueue) {
+            val last = items.lastOrNull()
+            if (a is Action.Drag && isMove(a) && last != null && !last.release && last.generation == gen &&
+                last.action is Action.Drag && isMove(last.action)
+            ) {
+                items[items.lastIndex] = last.copy(
+                    action = a.copy(path = listOf(last.action.path.first(), a.path.last())),
+                )
+            } else if (items.size < maxQueue) {
                 items.addLast(Entry(a, gen))
             }
         }
     }
 
-    /** A new session starts: ordinary leftovers go, pending releases stay. */
+    /** A new session starts: ordinary leftovers go, the release of a held finger stays. */
     fun beginSession() {
         generation++
-        items.removeAll { !isRelease(it.action) }
+        keepReleases()
     }
 
-    /** The session is over: drop ordinary actions, keep earlier releases, then queue [releases]. */
+    /** The session is over: drop ordinary actions, keep a held finger's release, then queue [releases]. */
     fun endSession(releases: List<Action>) {
         generation++
-        items.removeAll { !isRelease(it.action) }
-        for (a in releases) items.addLast(Entry(a, generation))
+        keepReleases()
+        for (a in releases) items.addLast(Entry(a, generation, release = true))
+    }
+
+    private fun keepReleases() {
+        val open = dispatchedEnd != null
+        val kept = items.filter { it.release || (open && isTerminalDrag(it.action)) }.map { it.copy(release = true) }
+        items.clear()
+        items.addAll(kept)
     }
 
     /** The next action to dispatch, or null. */
@@ -58,7 +77,9 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
         while (true) {
             val e = items.removeFirstOrNull() ?: return null
             val a = e.action
-            if (!isRelease(a) && e.generation != generation) continue
+            if (e.release) {
+                if (dispatchedEnd == null) continue // nothing is held any more
+            } else if (e.generation != generation) continue
             return if (a is Action.Drag) bridge(a) else a
         }
     }

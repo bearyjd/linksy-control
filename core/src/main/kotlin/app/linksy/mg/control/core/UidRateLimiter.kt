@@ -22,7 +22,8 @@ class UidRateLimiter(
 
     @Synchronized fun allow(uid: Int, cost: Double = 1.0): Boolean {
         val now = clock()
-        val b = buckets.remove(uid) ?: Bucket(capacity, now)
+        // A uid new to a full table starts empty, so cycling uids through eviction mints nothing.
+        val b = buckets.remove(uid) ?: Bucket(if (buckets.size >= MAX_UIDS) 0.0 else capacity, now)
         buckets[uid] = b // most recently used goes last
         if (buckets.size > MAX_UIDS) buckets.remove(buckets.keys.first())
         val elapsed = (now - b.lastMs).coerceAtLeast(0L) // a backwards clock mints nothing
