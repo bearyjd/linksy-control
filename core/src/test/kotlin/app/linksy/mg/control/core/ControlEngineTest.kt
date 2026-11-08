@@ -65,4 +65,11 @@ class ControlEngineTest {
         e.begin()
         assertEquals(Reject.MALFORMED, e.inject("nope", d).rejected)
     }
+
+    @Test fun isActiveTracksBeginEndAndExpiry() {
+        assertEquals(false, e.isActive())
+        e.begin(); assertEquals(true, e.isActive())
+        now += 61_000; assertEquals(false, e.isActive())
+        e.begin(); e.end(d); assertEquals(false, e.isActive())
+    }
 }

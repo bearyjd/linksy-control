@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Linksy Control</string>
+    <string name="service_label">Linksy Control</string>
+    <string name="service_description">Lets the Linksy app tap, swipe and type on this phone while you control it from your computer. It does nothing when no Linksy control session is running, and it never reads your screen.</string>
+
+    <string name="intro">Linksy Control lets you use this phone from your computer while Linksy mirrors its screen. It only taps, swipes, presses Back or Home, and types into the field you have selected, and only while you have started control from Linksy. It has no internet access and cannot send anything anywhere.</string>
+    <string name="how_title">How to turn it on</string>
+    <string name="how_steps">1. Tap \"Open Accessibility settings\" and turn on Linksy Control.\n2. On Android 13 and newer, if the switch is greyed out because you installed this app from a file, tap \"Open app info\", open the three-dot menu and choose \"Allow restricted settings\", then repeat step 1.\n3. In the Linksy app, start control and approve the pairing request shown here.\nIf your phone does not allow this, Linksy still mirrors the screen and can type through the Linksy keyboard.</string>
+    <string name="status_title">Status</string>
+    <string name="status_binding_off">Pairing is disabled. This build has no official Linksy certificate configured, so no app can control the phone. Install an official build.</string>
+    <string name="status_binding_on">Pairing is available for the official Linksy app only.</string>
+    <string name="status_service_on">Accessibility service: on</string>
+    <string name="status_service_off">Accessibility service: off</string>
+    <string name="status_session_on">Control session: active</string>
+    <string name="status_session_off">Control session: none</string>
+    <string name="paired_none">No app is approved.</string>
+    <string name="paired_app">Approved: %1$s</string>
+    <string name="revoke">Revoke approval</string>
+    <string name="open_accessibility">Open Accessibility settings</string>
+    <string name="open_app_info">Open app info</string>
+
+    <string name="pair_title">Allow Linksy to control this phone?</string>
+    <string name="pair_message">The Linksy app (%1$s, verified by its signature) wants to tap, swipe and type on this phone while you control it from your computer. You can revoke this any time in Linksy Control.</string>
+    <string name="pair_allow">Allow</string>
+    <string name="pair_deny">Don\'t allow</string>
+    <string name="pair_rejected">This request was not accepted: it does not come from the official Linksy app, or pairing is not configured in this build.</string>
+</resources>

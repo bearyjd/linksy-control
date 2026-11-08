@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- No permissions on purpose: no INTERNET, nothing else. -->
+
+    <!-- Lets the app see the official Linksy app's signing certificate (Android 11+ package visibility). -->
+    <queries>
+        <package android:name="${linksyPackage}" />
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:theme="@android:style/Theme.DeviceDefault.Light">
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Started by Linksy with startActivityForResult to ask the user to pair. The caller is
+             identified with getCallingPackage(), which only exists for startActivityForResult. -->
+        <activity
+            android:name=".PairActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar" />
+
+        <service
+            android:name=".ControlAccessibilityService"
+            android:exported="true"
+            android:label="@string/service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <!-- Exported because the Linksy app must bind to it. Every message is checked against the
+             sender's uid (CallerAuth: package + pinned certificate + user approval); see the class. -->
+        <service
+            android:name=".ControlBridgeService"
+            android:exported="true" />
+    </application>
+</manifest>

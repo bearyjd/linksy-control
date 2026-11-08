@@ -15,6 +15,8 @@ class ControlEngine(
         gate.begin()
     }
 
+    @Synchronized fun isActive(): Boolean = gate.isActive()
+
     /** Ends the session; returns actions that release any gesture still held. */
     @Synchronized fun end(display: Display): List<Action> {
         gate.end()

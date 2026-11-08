@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Minimal on purpose.
+  - canPerformGestures: needed to tap/swipe/drag.
+  - canRetrieveWindowContent: needed ONLY to find the focused text field (findFocus) for typing
+    from the computer; the code reads that one field and nothing else. Without it
+    getRootInActiveWindow() returns null and set-text is impossible.
+  - No accessibilityEventTypes: the service subscribes to no events at all.
+  - isAccessibilityTool="false": honest; this is not an assistive tool.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityFlags="flagDefault"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="true"
+    android:isAccessibilityTool="false"
+    android:description="@string/service_description"
+    android:settingsActivity="app.linksy.mg.control.SettingsActivity" />
