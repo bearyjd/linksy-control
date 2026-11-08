@@ -31,3 +31,71 @@ Security review (NEW-1..NEW-6) and Codex review of `4660a42`. Still not run on a
 | 4 | Shared DeathRecipient could end a newer session; OK sent before linkToDeath; retained Messenger after destroy | Fixed in the service glue (untested on device): per-session recipient checked against a session token and the owner binder, OK sent only after linkToDeath, `destroyed` flag checked in BEGIN. |
 | 5 | Docs: unbind wording; rotation | Fixed. README states the 60 s idle bound and the rotation limitation (queued actions run in old coordinates). |
 | 6 | Weak tests | Fixed. Forward clock step added after the backwards step; the `gen`-argument test replaced by one using the real call path. |
+
+# Review round 3
+
+Security review and Codex review of `e2dc09c`. Still not run on a device. Earlier wording that END
+"lifts a held finger" overclaimed: in rounds 1 and 2 a full queue could drop the release, a wheel swipe
+could desynchronize the stroke state, and a rejected gesture was recorded as accepted. Those are fixed
+below; the Android behavior itself (that the platform really lifts the finger) remains UNVERIFIED.
+
+| # | Finding | Disposition |
+|---|---------|-------------|
+| 1 | A full queue dropped the button-up release and left the finger down; the next session's first drag got a stale endpoint prefix | Fixed. The release of an open stroke is never dropped by the cap: an ordinary entry is evicted for it. `endSession`/`beginSession` synthesize a stationary release at the last endpoint when none is queued, so an open stroke always has a release and nothing leaks into the next session. Tests in `ActionQueueTest`. |
+| 2 | A wheel swipe replaced the stroke in the service but not in the queue, so END kept a "release" with an old prefix and the service started a new touch-down after END | Fixed. Dispatching a Tap, LongPress or Swipe forgets the endpoint in the queue, and a release is skipped when no stroke is open. A swipe still queued at END does not hide the real release. |
+| 3 | Colluding uids evicted the real Linksy's bucket (0/101 BEGINs) | Fixed. `UidRateLimiter`: only privileged uids (pinned package uid via `PinnedUid`, and the owner) get their own never-evicted bucket; every other uid shares one global bucket. A BEGIN from another uid gets WRONG_PACKAGE without lookups; a rate-limited BEGIN gets the new result code 6 BUSY. `PinnedUid` refreshes at most every 10 s. |
+| 4 | Coalescing kept only the first start and the latest end | Fixed. The merged path keeps the polyline, pruned to 64 points by dropping the points that bend it least (reversals survive), and durations add up, capped at 5 s. |
+| 5 | A rejected `dispatchGesture` left the stroke recorded as valid | Fixed. `StrokeTracker` (core, tested) clears the stroke and the queue endpoint on rejection and on cancel. The service wiring is compile and lint only. |
+| 6 | Owner traffic unmetered; the bridge session outlived engine expiry; main-thread cost | Partly fixed. The bridge session closes when the engine expires it. The owner has a high budget (burst 3000, 1500/s): exceeding it ends the session, with the release synthesized, instead of dropping single messages; END is never metered. Not changed: the per-INJECT approval lookup and JSON parse stay on the main thread; they are bounded by the owner budget. |
+| 7 | README overstated caller-death; weak tests | Fixed. README reworded (the `replyTo` is caller-chosen, so its death is not proof of anything). Churn test asserts the Linksy uid is still admitted; full-cap button-up then END, and non-straight and unequal-duration coalescing are tested. |
+
+Untested glue (needs a device): the `dispatchGesture` rejection path, the bridge/engine expiry hook, the
+`getPackageUid` lookup.
+
+# Review round 4
+
+Round 4: Codex found one MEDIUM (confirmed by a probe); the opus security review rated the PR clean with five LOWs.
+
+| # | Finding | Disposition |
+|---|---------|-------------|
+| 1 | MEDIUM (Codex): drag dispatched, a wheel swipe replaces it (the queue forgets the endpoint) while the mapper is still DRAGGING; the later button-up emits a terminal drag that, with no open stroke, was queued as an ordinary action and dispatched as a fresh short stroke (phantom touch). Same after a rejected stroke | Fixed in `ActionQueue`: it remembers that the gesture's stroke was replaced or lost (`strokeGone`) and drops the next terminal drag unless a move has started a new stroke. A terminal-only quick drag and taps are unchanged. The mapper is not reset: later moves still start a fresh stroke and get their own release. |
+| 2 | LOW (security 1, 3): a kept release could keep moving the finger for up to 5 s after END, and releases piled up across BEGIN/END cycles past the cap | Fixed. `endSession()` and `beginSession()` drop every queued entry and queue ONE stationary lift at the last dispatched endpoint (none if nothing is held). `endSession` no longer takes the mapper's releases. |
+| 3 | LOW (security 2): evicting an ordinary entry for a release that was then skipped lost typed text | Fixed. The release takes one extra slot (`maxQueue + 1`); nothing is evicted. At most one release is queued. |
+| 4 | LOW (Codex 2): at 63 pending points each new point replaced the tail, losing an A-B-A excursion inside one 50 ms window | Fixed. At capacity the interior point that bends the path least is dropped. |
+| 5 | LOW (security 4, 5, Codex): README overclaim on colluding uids; PinnedUid stale for 10 s after reinstall; client obligations; production constants untested; `BridgeIngress` default clock `{ 0L }` never refills | Fixed. README states what the bucket isolation proves, the possible WRONG_PACKAGE window, re-BEGIN after an ended session and the ~1500 msg/s limit. `PinnedUid` re-resolves a mismatching sender once per second at most. `OWNER_BURST`/`OWNER_PER_SEC` moved to `BridgeIngress` and tests assert 1200 Hz is admitted for a minute and 5000/s trips. `ownerLimiter` has no default. Not done: a `REPLY_ENDED` notification (not trivial; documented instead). |
+
+Defaults chosen: lift duration 1 ms; recheck interval 1 s; re-resolve applies to every mismatching sender (bounded by the interval, not only BEGIN).
+
+## Round 4 addendum
+
+Codex re-reviewed the round 4 delta (dea26cb..5be0c57) and confirmed two more MEDIUMs in the `strokeGone` flag, plus one LOW.
+
+| # | Finding | Disposition |
+|---|---------|-------------|
+| 1 | MEDIUM: `strokeGone` was cleared for every continuing drag before admission, so a move dropped at capacity still cleared it and the later button-up became a phantom touch | Fixed: the flag is cleared only when a move is queued or merged. Test: stroke lost, queue full, move dropped, button-up dispatches nothing. |
+| 2 | MEDIUM: a skipped release (`dispatchedEnd == null`) left `strokeGone` set, so the next independent quick drag (terminal only) was silently dropped | Fixed: skipping a release clears the flag, since the gesture it belonged to is over. Test: drag, swipe, button-up, then a new quick drag dispatches. |
+| 3 | LOW: three ActionQueue tests could not fail (unused local, a single release, no moving release) | Strengthened: a moving 5000 ms release is queued, two releases are supplied, the unused local is gone. |
+| 4 | Privacy: commit 5be0c57 accidentally tracked local tool state (`.omc/STATE.md`, `.omc/state/**`; no secrets) | `.omc/` and `.claude/` are untracked and git-ignored. The files stay in PR history; the squash merge keeps main clean (a force-push would not purge them from GitHub either). |
+
+## Round 4 addendum 2
+
+Codex's quick check showed the single global `strokeGone` flag is the wrong shape: it names no gesture, so it goes stale or hits the wrong one.
+
+| # | Finding | Disposition |
+|---|---------|-------------|
+| 1 | MEDIUM: drag dispatched, a recovered move admitted (clears the flag), `strokeLost()` sets it again, the recovered stroke and its button-up dispatch, and the flag is never cleared; the next independent quick drag is dropped | Fixed by replacing the flag. `GestureMapper` stamps every action of a logical gesture with a monotonic `gestureId`; `ActionQueue` keeps a bounded ring `lostGestures` of ids whose stroke was replaced or lost. A terminal drag is dropped iff its own id is in the ring; the id is removed when that terminal is dropped or skipped, when a move of the gesture is admitted or dispatched (fresh stroke), and on END/BEGIN. |
+| 2 | MEDIUM: drag A dispatched, Swipe and A's button-up queued; the swipe sets the flag, an independent quick drag enqueued before `next()` reaches A's old release is dropped instead of that release | Fixed by the same change: the swipe marks A lost, the quick drag has another id and runs, and A's old release is skipped at dispatch. |
+
+Tests: both sequences, drag-swipe-button-up and drag-rejected-button-up (no touch), Back/Home/SetText keep the release, a new drag with moves after a swipe releases, recovered stroke then quick drag, END/BEGIN clears the ring, the ring stays bounded (`MAX_LOST` = 8) under a flood, mapper id monotonicity. Residual: a loss older than the last 8 lost gestures is forgotten; a gesture's button-up cannot arrive after 8 later gestures were all lost, because the mapper emits one gesture at a time.
+
+## Round 4 addendum 3
+
+Codex round 7 found two blocking issues in the per-gesture design.
+
+| # | Finding | Disposition |
+|---|---------|-------------|
+| 1 | Stray touch after the user lifted: moves of one gesture queued before a stroke loss were merged with moves queued after it, and a pre-loss move dispatched after the loss started a fresh stroke that the already-queued button-up then ended | Rule (written in the `ActionQueue` KDoc): moves of a gesture queued before its stroke was lost belong to the lost stroke and are discarded at the moment of loss (`strokeLost()` and the dispatch of a Tap, LongPress or Swipe). Entries carry a loss epoch and merge only within one epoch. Moves admitted after the loss start a fresh stroke and are placed before the gesture's queued button-up, which then releases that fresh stroke; without post-loss moves the button-up is dropped. |
+| 2 | Stuck finger: a button-up arriving with an invalid display (e.g. `Display(0,0)`) was rejected before `leftUp()`, so no release was queued | `GestureMapper.handle` lets a left button-up through with an invalid display and builds the terminal on the last valid display it saw; `release()` does the same. Presses, moves, scroll and keys still need a valid display. `ControlEngine` already passes every message to the mapper, so no button-up is swallowed there. |
+
+Tests: lost with no post-loss moves (nothing dispatched), lost with post-loss moves (fresh stroke then release, several moves too), pre-loss moves never dispatched, Swipe replacement variants, other gestures' moves survive; mapper and engine tests for an invalid-display button-up (drag, press, `release()`) and for zero-display press/move still rejected. One existing test (`recoveredStrokeThenIndependentQuickDragIsDispatched`) changed because the rule now discards the pre-loss recovered move. Residual: whether the platform really reports a zero display transiently is unknown; the fix is safe either way.
+

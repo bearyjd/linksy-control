@@ -191,6 +191,36 @@ class GestureMapperTest {
         assertEquals(Reject.INVALID, send(ptr(0.5, 0.5), 0, Display(100, -1)).rejected)
     }
 
+    private val zero = Display(0, 0)
+
+    @Test fun leftUpWithInvalidDisplayStillReleasesAHeldDrag() {
+        acts(ptr(0.5, 0.5)); acts(btn("left", true), 0)
+        assertIs<Action.Drag>(acts(ptr(0.5, 0.8), 60).single())
+        val out = acts(btn("left", false), 70, zero)
+        assertEquals(false, assertIs<Action.Drag>(out.single()).continuing)
+        assertEquals(Point(500f, 1600f), out.single().let { (it as Action.Drag).path.last() })
+        assertTrue(acts(btn("left", false), 80).isEmpty()) // gesture is over
+    }
+
+    @Test fun leftUpWithInvalidDisplayStillEndsAPress() {
+        acts(ptr(0.5, 0.5)); acts(btn("left", true), 0)
+        assertEquals(listOf(Action.Tap(Point(500f, 1000f))), acts(btn("left", false), 50, zero))
+    }
+
+    @Test fun invalidDisplayPressAndMoveAreStillRejected() {
+        assertEquals(Reject.INVALID, send(btn("left", true), 0, zero).rejected)
+        acts(ptr(0.5, 0.5)); acts(btn("left", true), 0)
+        assertEquals(Reject.INVALID, send(ptr(0.5, 0.9), 60, zero).rejected)
+        assertEquals(Reject.INVALID, send(btn("left", true), 60, zero).rejected)
+        assertEquals(Reject.INVALID, send(btn("right", false), 60, zero).rejected)
+    }
+
+    @Test fun releaseWithInvalidDisplayUsesTheLastValidOne() {
+        acts(ptr(0.5, 0.5)); acts(btn("left", true), 0); acts(ptr(0.5, 0.8), 60)
+        val out = m.release(zero, 70)
+        assertEquals(false, assertIs<Action.Drag>(out.single()).continuing)
+    }
+
     @Test fun textMapsAndIsBoundedInBytes() {
         assertEquals(listOf(Action.SetText("hello")), acts("""{"type":"text","text":"hello"}"""))
         assertEquals(1, acts("""{"type":"text","text":"${"a".repeat(1024)}"}""").size)
@@ -246,5 +276,27 @@ class GestureMapperTest {
 
     @Test fun neverRejectsValidMessage() {
         assertNull(send(ptr(0.1, 0.1)).rejected)
+    }
+
+    @Test fun anExcursionAfterManyPendingPointsIsNotLost() {
+        acts(ptr(0.5, 0.5)); acts(btn("left", true), 0)
+        for (i in 0 until 70) acts(ptr(0.52 + i * 0.001, 0.5), 10)
+        acts(ptr(0.6, 0.6), 10) // B: 200 px off the line
+        acts(ptr(0.6, 0.5), 10) // back
+        val drag = assertIs<Action.Drag>(acts(btn("left", false), 20).single())
+        assertTrue(drag.path.any { it.y > 1100f }, "excursion kept: ${drag.path}")
+        assertTrue(drag.path.size <= GestureMapper.MAX_PATH_POINTS)
+    }
+
+    @Test fun everythingOfOneGestureSharesAnIdAndEachGestureGetsALargerOne() {
+        acts(ptr(0.5, 0.5)); acts(btn("left", true), 0)
+        val first = assertIs<Action.Drag>(acts(ptr(0.9, 0.9), 60).single())
+        val firstUp = assertIs<Action.Drag>(acts(btn("left", false), 70).single())
+        assertTrue(first.gestureId > Action.Drag.NO_GESTURE)
+        assertEquals(first.gestureId, firstUp.gestureId)
+        acts(btn("left", true), 100)
+        acts(ptr(0.1, 0.1), 105) // throttled: only the terminal segment is emitted
+        val quick = assertIs<Action.Drag>(acts(btn("left", false), 110).single())
+        assertTrue(quick.gestureId > firstUp.gestureId)
     }
 }

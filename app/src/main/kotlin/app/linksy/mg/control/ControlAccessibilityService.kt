@@ -18,6 +18,7 @@ import app.linksy.mg.control.core.ActionQueue
 import app.linksy.mg.control.core.ControlEngine
 import app.linksy.mg.control.core.Display
 import app.linksy.mg.control.core.Point
+import app.linksy.mg.control.core.StrokeTracker
 import app.linksy.mg.control.core.TextEdit
 
 /**
@@ -29,7 +30,7 @@ class ControlAccessibilityService : AccessibilityService() {
     private val engine = ControlEngine(SystemClock::elapsedRealtime)
     private val queue = ActionQueue()
     private var inFlight = false
-    private var lastStroke: StrokeDescription? = null
+    private val strokes = StrokeTracker<StrokeDescription>(queue)
 
     private val tick = object : Runnable {
         override fun run() {
@@ -37,7 +38,8 @@ class ControlAccessibilityService : AccessibilityService() {
                 enqueue(engine.tick(display())) // may release a held stroke after a display change
                 main.postDelayed(this, TICK_MS)
             } else {
-                finish(engine.tick(display())) // timed out: drop queued input, keep the release
+                engine.tick(display()); finish() // timed out: drop queued input, keep the release
+                ControlBridgeService.instance?.onEngineEnded() // the bridge session ends with it
             }
         }
     }
@@ -60,7 +62,7 @@ class ControlAccessibilityService : AccessibilityService() {
 
     fun beginSession() {
         engine.begin()
-        // A pending release from a replaced session stays queued, and lastStroke stays with it.
+        // A pending release from a replaced session stays queued, and the stroke tracker stays with it.
         queue.beginSession()
         main.removeCallbacks(tick)
         main.postDelayed(tick, TICK_MS)
@@ -68,7 +70,8 @@ class ControlAccessibilityService : AccessibilityService() {
 
     fun endSession() {
         main.removeCallbacks(tick)
-        finish(engine.end(display()))
+        engine.end(display()) // the queue lifts a held finger itself, where it is
+        finish()
     }
 
     fun inject(json: String) {
@@ -79,7 +82,8 @@ class ControlAccessibilityService : AccessibilityService() {
             main.removeCallbacks(tick)
             main.postDelayed(tick, TICK_MS)
         } else {
-            finish(result.actions)
+            finish()
+            ControlBridgeService.instance?.onEngineEnded() // expired: the bridge session ends with it
         }
     }
 
@@ -95,9 +99,9 @@ class ControlAccessibilityService : AccessibilityService() {
         pump()
     }
 
-    /** The session is over: queued ordinary input is dropped; only [releases] and earlier releases run. */
-    private fun finish(releases: List<Action>) {
-        queue.endSession(releases)
+    /** The session is over: queued input is dropped; a held finger gets one stationary lift. */
+    private fun finish() {
+        queue.endSession()
         pump()
     }
 
@@ -123,10 +127,10 @@ class ControlAccessibilityService : AccessibilityService() {
             moveTo(points.first().x, points.first().y)
             points.drop(1).forEach { lineTo(it.x, it.y) }
         }
-        val prev = if (fresh) null else lastStroke
+        val prev = strokes.continuation(fresh)
         val stroke = if (prev != null) prev.continueStroke(path, 0, durationMs, willContinue)
         else StrokeDescription(path, 0, durationMs, willContinue)
-        lastStroke = if (willContinue) stroke else null
+        strokes.dispatched(stroke, willContinue)
         return stroke
     }
 
@@ -134,14 +138,16 @@ class ControlAccessibilityService : AccessibilityService() {
         val callback = object : GestureResultCallback() {
             override fun onCompleted(g: GestureDescription?) = done()
             override fun onCancelled(g: GestureDescription?) {
-                lastStroke = null // a cancelled stroke cannot be continued
-                queue.strokeLost()
+                strokes.cancelled() // a cancelled stroke cannot be continued
                 done()
             }
         }
         inFlight = true
         val accepted = dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), callback, main)
-        if (!accepted) done()
+        if (!accepted) {
+            strokes.rejected() // Android never took this stroke; later segments must not continue it
+            done()
+        }
     }
 
     private fun done() {

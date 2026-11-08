@@ -87,4 +87,19 @@ class ControlEngineTest {
         e.begin(); e.inject(ptr(0.5), d); e.inject(down, d); now = 100; e.inject(ptr(0.8), d)
         assertTrue(e.inject(ptr(0.85), d).actions.none { it is Action.Drag && !it.continuing })
     }
+
+    @Test fun buttonUpWithInvalidDisplayStillReleasesTheFinger() {
+        e.begin(); e.inject(ptr(0.5), d); e.inject(down, d)
+        now += 60
+        assertIs<Action.Drag>(e.inject(ptr(0.6), d).actions.single())
+        now += 10
+        val r = e.inject(up, Display(0, 0))
+        assertEquals(false, assertIs<Action.Drag>(r.actions.single()).continuing)
+    }
+
+    @Test fun zeroDisplayPressAndMoveAreStillRejected() {
+        e.begin(); e.inject(ptr(0.5), d)
+        assertEquals(Reject.INVALID, e.inject(down, Display(0, 0)).rejected)
+        assertEquals(Reject.INVALID, e.inject(ptr(0.6), Display(0, 0)).rejected)
+    }
 }

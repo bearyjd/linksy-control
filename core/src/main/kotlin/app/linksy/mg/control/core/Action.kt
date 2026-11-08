@@ -15,9 +15,19 @@ sealed interface Action {
 
     /**
      * One segment of a finger stroke. [continuing] = the finger stays down after this segment
-     * (willContinue); the next Drag starts at this one's last point.
+     * (willContinue); the next Drag starts at this one's last point. [gestureId] names the logical
+     * gesture (button-down to button-up) it belongs to; [NO_GESTURE] for legacy or synthesized drags.
      */
-    data class Drag(val path: List<Point>, val durationMs: Long, val continuing: Boolean) : Action
+    data class Drag(
+        val path: List<Point>,
+        val durationMs: Long,
+        val continuing: Boolean,
+        val gestureId: Long = NO_GESTURE,
+    ) : Action {
+        companion object {
+            const val NO_GESTURE = 0L
+        }
+    }
 
     /** A scroll: a quick two-point swipe. */
     data class Swipe(val from: Point, val to: Point, val durationMs: Long) : Action

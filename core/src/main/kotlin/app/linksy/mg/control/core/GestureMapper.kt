@@ -45,6 +45,7 @@ class GestureMapper {
     private data class FPoint(val x: Double, val y: Double)
 
     private data class Gesture(
+        val id: Long,
         val phase: Phase,
         val down: FPoint,
         val downMs: Long,
@@ -55,11 +56,23 @@ class GestureMapper {
 
     private var lastPointer: FPoint? = null
     private var gesture: Gesture? = null
+    private var lastGestureId = Action.Drag.NO_GESTURE // monotonic, never reset
+    private var lastValid: Display? = null // the last display a press or move was accepted on
 
+    /**
+     * A left button-up never depends on display validity: it ends the gesture on [display] if that
+     * is valid, else on the last valid display seen, so a finger that went down is always lifted.
+     * Every other message (press, move, scroll, key) still needs a valid [display].
+     */
     fun handle(json: String, display: Display, nowMs: Long): MapResult {
         if (json.length > MAX_MESSAGE_CHARS) return MapResult(rejected = Reject.TOO_LARGE)
-        if (!display.valid) return MapResult(rejected = Reject.INVALID)
-        val obj = parse(json) ?: return MapResult(rejected = Reject.MALFORMED)
+        if (display.valid) lastValid = display
+        val obj = parse(json)
+        if (!display.valid) {
+            if (obj == null || !isLeftUp(obj)) return MapResult(rejected = Reject.INVALID)
+            return leftUp(lastValid ?: return MapResult(), nowMs)
+        }
+        obj ?: return MapResult(rejected = Reject.MALFORMED)
         val type = obj.string("type") ?: return MapResult(rejected = Reject.MALFORMED)
         return when (type) {
             "pointer" -> pointer(obj, display, nowMs)
@@ -71,18 +84,23 @@ class GestureMapper {
         }
     }
 
-    /** Ends any in-progress gesture (session over). Later button-up events do nothing. */
+    /** Ends any in-progress gesture (session over), on the last valid display if [display] is not. */
     fun release(display: Display, nowMs: Long): List<Action> {
         val g = gesture ?: return emptyList()
         gesture = null
-        if (g.phase != Phase.DRAGGING || !display.valid) return emptyList()
-        return listOf(segment(g, display, nowMs, continuing = false).first)
+        val at = display.takeIf { it.valid } ?: lastValid
+        if (g.phase != Phase.DRAGGING || at == null) return emptyList()
+        return listOf(segment(g, at, nowMs, continuing = false).first)
     }
+
+    private fun isLeftUp(o: JsonObject) =
+        o.string("type") == "button" && o.string("button") == "left" && o.bool("pressed") == false
 
     /** Forgets everything without emitting (a fresh session). */
     fun reset() {
         gesture = null
         lastPointer = null
+        lastValid = null
     }
 
     private fun pointer(o: JsonObject, d: Display, now: Long): MapResult {
@@ -96,7 +114,7 @@ class GestureMapper {
         if (g.phase == Phase.PRESSED && distancePx(g.down, p, d) > SLOP_PX) next = g.copy(phase = Phase.DRAGGING)
         if (next.phase != Phase.DRAGGING) return MapResult()
         val room = MAX_PATH_POINTS - 1
-        val pending = if (next.pending.size < room) next.pending + p else next.pending.dropLast(1) + p
+        val pending = if (next.pending.size < room) next.pending + p else dropFlattest(next.lastEmitted, next.pending + p, d)
         next = next.copy(pending = pending)
         if (now - next.lastEmitMs < SEGMENT_MS) {
             gesture = next
@@ -105,6 +123,31 @@ class GestureMapper {
         val (action, after) = segment(next, d, now, continuing = true)
         gesture = after
         return MapResult(listOf(action))
+    }
+
+    /** At capacity: drops the interior point that bends the path least, so a short excursion survives. */
+    private fun dropFlattest(start: FPoint, points: List<FPoint>, d: Display): List<FPoint> {
+        var drop = 0
+        var least = Double.MAX_VALUE
+        for (i in 0 until points.lastIndex) {
+            val dev = deviationPx(if (i == 0) start else points[i - 1], points[i], points[i + 1], d)
+            if (dev < least) {
+                least = dev
+                drop = i
+            }
+        }
+        return points.filterIndexed { i, _ -> i != drop }
+    }
+
+    private fun deviationPx(a: FPoint, b: FPoint, c: FPoint, d: Display): Double {
+        val ax = a.x * d.width; val ay = a.y * d.height
+        val dx = c.x * d.width - ax
+        val dy = c.y * d.height - ay
+        val len2 = dx * dx + dy * dy
+        val bx = b.x * d.width - ax
+        val by = b.y * d.height - ay
+        val t = if (len2 == 0.0) 0.0 else ((bx * dx + by * dy) / len2).coerceIn(0.0, 1.0)
+        return kotlin.math.hypot(bx - t * dx, by - t * dy)
     }
 
     private fun button(o: JsonObject, d: Display, now: Long): MapResult {
@@ -121,7 +164,7 @@ class GestureMapper {
     private fun leftDown(now: Long): MapResult {
         val at = lastPointer
         if (at != null && gesture == null) {
-            gesture = Gesture(Phase.PRESSED, at, now, at, now, emptyList())
+            gesture = Gesture(++lastGestureId, Phase.PRESSED, at, now, at, now, emptyList())
         }
         return MapResult()
     }
@@ -141,7 +184,7 @@ class GestureMapper {
         val path = (listOf(g.lastEmitted) + g.pending).map { toPx(it, d) }
         val duration = (now - g.lastEmitMs).coerceIn(1L, MAX_SEGMENT_MS)
         val next = g.copy(lastEmitted = g.pending.lastOrNull() ?: g.lastEmitted, lastEmitMs = now, pending = emptyList())
-        return Action.Drag(path, duration, continuing) to next
+        return Action.Drag(path, duration, continuing, g.id) to next
     }
 
     private fun scroll(o: JsonObject, d: Display): MapResult {
