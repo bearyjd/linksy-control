@@ -10,13 +10,13 @@ class ActionQueueTest {
     private val q = ActionQueue()
     private val tap = Action.Tap(Point(1f, 1f))
     private fun p(y: Float) = Point(0f, y)
-    private fun drag(from: Float, to: Float, continuing: Boolean) =
-        Action.Drag(listOf(p(from), p(to)), 10, continuing)
+    private fun drag(from: Float, to: Float, continuing: Boolean, id: Long = Action.Drag.NO_GESTURE) =
+        Action.Drag(listOf(p(from), p(to)), 10, continuing, id)
 
     private fun drain(): List<Action> = generateSequence { q.next() }.toList()
 
-    private fun holdFinger() {
-        q.enqueue(listOf(drag(0f, 1f, continuing = true)))
+    private fun holdFinger(id: Long = Action.Drag.NO_GESTURE) {
+        q.enqueue(listOf(drag(0f, 1f, continuing = true, id = id)))
         q.next() // dispatched: a stroke is now open at p(1)
     }
 
@@ -419,7 +419,7 @@ class ActionQueueTest {
         assertEquals(false, assertIs<Action.Drag>(out.last()).continuing)
     }
 
-    @Test fun aMoveDroppedAtCapacityDoesNotClearTheSuppressionFlag() {
+    @Test fun aMoveDroppedAtCapacityDoesNotMakeTheLostGestureLiveAgain() {
         holdFinger()
         q.strokeLost()
         repeat(ActionQueue.MAX_QUEUE) { q.enqueue(listOf(tap)) }
@@ -437,5 +437,98 @@ class ActionQueueTest {
         val quick = drag(3f, 4f, continuing = false)
         q.enqueue(listOf(quick))
         assertEquals(quick, q.next())
+    }
+
+    // --- round 4 addendum 2: per-gesture identity instead of a global flag ---
+
+    @Test fun recoveredStrokeThenIndependentQuickDragIsDispatched() {
+        holdFinger(1)
+        q.enqueue(listOf(drag(1f, 2f, continuing = true, id = 1)))
+        q.strokeLost() // the platform cancels while the recovered move is still queued
+        q.enqueue(listOf(drag(2f, 3f, continuing = false, id = 1)))
+        val out = drain().map { assertIs<Action.Drag>(it) }
+        assertEquals(listOf(true, false), out.map { it.continuing })
+        val quick = drag(7f, 8f, continuing = false, id = 2)
+        q.enqueue(listOf(quick))
+        assertEquals(quick, q.next())
+    }
+
+    @Test fun anOldReleaseQueuedBehindASwipeIsTheOneSuppressedNotTheNextQuickDrag() {
+        holdFinger(1)
+        q.enqueue(listOf(swipe, drag(1f, 2f, continuing = false, id = 1)))
+        assertIs<Action.Swipe>(q.next()) // the swipe replaces the stroke of gesture 1
+        val quick = drag(7f, 8f, continuing = false, id = 2)
+        q.enqueue(listOf(quick)) // enqueued before next() reaches gesture 1's old release
+        assertEquals(quick, q.next())
+        assertNull(q.next())
+    }
+
+    @Test fun dragSwipeButtonUpMakesNoTouchByGestureId() {
+        holdFinger(1)
+        q.enqueue(listOf(swipe))
+        assertIs<Action.Swipe>(q.next())
+        q.enqueue(listOf(drag(1f, 2f, continuing = false, id = 1)))
+        assertNull(q.next())
+        assertEquals(0, q.lostGestureCount)
+    }
+
+    @Test fun dragRejectedButtonUpMakesNoTouchByGestureId() {
+        holdFinger(1)
+        q.strokeLost()
+        q.enqueue(listOf(drag(1f, 2f, continuing = false, id = 1)))
+        assertNull(q.next())
+        assertEquals(0, q.lostGestureCount)
+    }
+
+    @Test fun backHomeAndTextDoNotReplaceTheStrokeSoButtonUpStillReleases() {
+        holdFinger(1)
+        q.enqueue(listOf(Action.Back, Action.Home, Action.SetText("x"), drag(1f, 2f, continuing = false, id = 1)))
+        val out = drain()
+        assertEquals(4, out.size)
+        assertEquals(false, assertIs<Action.Drag>(out.last()).continuing)
+    }
+
+    @Test fun aNewDragWithMovesAfterASwipeGetsItsOwnRelease() {
+        holdFinger(1)
+        q.enqueue(listOf(swipe))
+        q.next()
+        q.enqueue(listOf(drag(5f, 6f, continuing = true, id = 2)))
+        assertIs<Action.Drag>(q.next())
+        q.enqueue(listOf(drag(6f, 7f, continuing = false, id = 2)))
+        assertEquals(false, assertIs<Action.Drag>(q.next()).continuing)
+    }
+
+    @Test fun aMoveOfALostGestureStartsAFreshStrokeAndClearsTheLoss() {
+        holdFinger(1)
+        q.strokeLost()
+        assertEquals(1, q.lostGestureCount)
+        q.enqueue(listOf(drag(5f, 6f, continuing = true, id = 1)))
+        assertEquals(0, q.lostGestureCount)
+        q.next()
+        q.enqueue(listOf(drag(6f, 7f, continuing = false, id = 1)))
+        assertEquals(false, assertIs<Action.Drag>(q.next()).continuing)
+    }
+
+    @Test fun endAndBeginForgetLostGestures() {
+        holdFinger(1)
+        q.strokeLost()
+        assertEquals(1, q.lostGestureCount)
+        q.endSession()
+        assertEquals(0, q.lostGestureCount)
+        q.beginSession()
+        val quick = drag(3f, 4f, continuing = false, id = 1)
+        q.enqueue(listOf(quick))
+        assertEquals(quick, q.next())
+    }
+
+    @Test fun lostGesturesStayBoundedUnderAFlood() {
+        for (id in 1L..1000L) {
+            q.enqueue(listOf(drag(0f, 1f, continuing = true, id = id)))
+            q.next()
+            q.strokeLost()
+        }
+        assertTrue(q.lostGestureCount <= ActionQueue.MAX_LOST, "count=${q.lostGestureCount}")
+        q.enqueue(listOf(drag(0f, 1f, continuing = false, id = 1000)))
+        assertNull(q.next()) // the newest loss is still remembered
     }
 }

@@ -32,6 +32,7 @@ import kotlin.math.hypot
 class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
     companion object {
         const val MAX_QUEUE = 32
+        const val MAX_LOST = 8
     }
 
     private data class Entry(val action: Action, val generation: Long, val release: Boolean = false)
@@ -41,6 +42,9 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
 
     /** The logical gesture's stroke was replaced or lost and no move has started a new one since. */
     private var strokeGone = false
+
+    /** RED-PHASE STUB: replaced by the real lost-gesture set in the fix commit. */
+    val lostGestureCount: Int get() = Int.MAX_VALUE
 
     var generation = 0L
         private set

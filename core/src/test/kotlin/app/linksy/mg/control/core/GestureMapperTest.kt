@@ -257,4 +257,16 @@ class GestureMapperTest {
         assertTrue(drag.path.any { it.y > 1100f }, "excursion kept: ${drag.path}")
         assertTrue(drag.path.size <= GestureMapper.MAX_PATH_POINTS)
     }
+
+    @Test fun everythingOfOneGestureSharesAnIdAndEachGestureGetsALargerOne() {
+        acts(ptr(0.5, 0.5)); acts(btn("left", true), 0)
+        val first = assertIs<Action.Drag>(acts(ptr(0.9, 0.9), 60).single())
+        val firstUp = assertIs<Action.Drag>(acts(btn("left", false), 70).single())
+        assertTrue(first.gestureId > Action.Drag.NO_GESTURE)
+        assertEquals(first.gestureId, firstUp.gestureId)
+        acts(btn("left", true), 100)
+        acts(ptr(0.1, 0.1), 105) // throttled: only the terminal segment is emitted
+        val quick = assertIs<Action.Drag>(acts(btn("left", false), 110).single())
+        assertTrue(quick.gestureId > firstUp.gestureId)
+    }
 }
