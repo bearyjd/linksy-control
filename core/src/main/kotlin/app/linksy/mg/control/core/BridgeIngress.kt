@@ -1,15 +1,48 @@
 package app.linksy.mg.control.core
 
-enum class Admission { ADMIT, DROP, BUSY, WRONG_PACKAGE, OWNER_OVER_BUDGET }
+/** What to do with an incoming bridge message. */
+enum class Admission {
+    ADMIT,
 
+    /** Ignore silently (non-owner traffic over its budget). */
+    DROP,
+
+    /** A BEGIN that was rate limited: answer with a cheap BUSY reply. */
+    BUSY,
+
+    /** A BEGIN from a uid that is not the pinned package's: answer WRONG_PACKAGE, no lookups. */
+    WRONG_PACKAGE,
+
+    /** The owner exceeded its generous budget: end the session (releases still run). */
+    OWNER_OVER_BUDGET,
+}
+
+/**
+ * Decides which incoming bridge messages are admitted, before any costly work.
+ *
+ * - BEGIN from a uid that is not the pinned package's gets WRONG_PACKAGE without package or
+ *   certificate lookups, metered by the shared global bucket (BUSY once that is empty).
+ *   BEGIN from the pinned uid costs [beginCost] from its own bucket (BUSY when empty).
+ * - The owner's messages draw on [ownerLimiter], a generous budget. Over it, the session ends
+ *   ([Admission.OWNER_OVER_BUDGET]) instead of single messages being dropped, so input is never
+ *   thinned silently and the release still runs. END is never metered.
+ * - Other traffic is metered by [limiter] (global bucket for ordinary uids) and dropped when empty.
+ */
 class BridgeIngress(
     private val session: BridgeSession,
     private val limiter: UidRateLimiter,
     private val beginCost: Double = 20.0,
-    private val ownerLimiter: UidRateLimiter = UidRateLimiter({ 0L }),
+    private val ownerLimiter: UidRateLimiter = UidRateLimiter({ 0L }, capacity = 3000.0, refillPerSec = 1500.0, isPrivileged = { true }),
     private val isLinksyUid: (Int) -> Boolean = { true },
 ) {
-    fun admit(sender: Int, isBegin: Boolean, isEnd: Boolean = false): Admission =
-        if (!isBegin && session.isOwner(sender) || limiter.allow(sender, if (isBegin) beginCost else 1.0)) Admission.ADMIT
-        else Admission.DROP
+    fun admit(sender: Int, isBegin: Boolean, isEnd: Boolean = false): Admission = when {
+        isBegin && !isLinksyUid(sender) ->
+            if (limiter.allow(sender)) Admission.WRONG_PACKAGE else Admission.BUSY
+        isBegin -> if (limiter.allow(sender, beginCost)) Admission.ADMIT else Admission.BUSY
+        session.isOwner(sender) -> when {
+            isEnd || ownerLimiter.allow(sender) -> Admission.ADMIT
+            else -> Admission.OWNER_OVER_BUDGET
+        }
+        else -> if (limiter.allow(sender)) Admission.ADMIT else Admission.DROP
+    }
 }

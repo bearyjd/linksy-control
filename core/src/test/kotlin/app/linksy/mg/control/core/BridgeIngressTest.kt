@@ -11,7 +11,7 @@ class BridgeIngressTest {
     private val linksyUid = 1000
     private val limiter = UidRateLimiter({ now }, capacity = 10.0, refillPerSec = 10.0,
         isPrivileged = { it == linksyUid || session.isOwner(it) })
-    private val ownerLimiter = UidRateLimiter({ now }, capacity = 100.0, refillPerSec = 50.0, isPrivileged = { true })
+    private val ownerLimiter = UidRateLimiter({ now }, capacity = 100.0, refillPerSec = 200.0, isPrivileged = { true })
     private val ingress = BridgeIngress(session, limiter, beginCost = 8.0, ownerLimiter = ownerLimiter,
         isLinksyUid = { it == linksyUid })
 

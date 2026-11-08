@@ -132,9 +132,9 @@ class ActionQueueTest {
 
     @Test fun droppedMidDragSegmentIsBridgedFromTheLastDispatchedEndpoint() {
         val small = ActionQueue(maxQueue = 2)
-        small.enqueue(listOf(drag(0f, 1f, true), tap, drag(1f, 2f, true))) // third dropped (full)
+        small.enqueue(listOf(drag(0f, 1f, true), Action.Back, drag(1f, 2f, true))) // third dropped (full)
         assertEquals(drag(0f, 1f, true), small.next())
-        assertEquals(tap, small.next())
+        assertEquals(Action.Back, small.next())
         small.enqueue(listOf(drag(2f, 3f, true)))
         val next = assertIs<Action.Drag>(small.next())
         assertEquals(listOf(p(1f), p(2f), p(3f)), next.path)
@@ -163,13 +163,13 @@ class ActionQueueTest {
     }
 
 
-    private fun fillWithTaps() = repeat(ActionQueue.MAX_QUEUE) { q.enqueue(listOf(tap)) }
+    private fun fill() = repeat(ActionQueue.MAX_QUEUE) { q.enqueue(listOf(Action.Back)) }
 
     // --- round 3: release survives the cap, END synthesizes, no stale prefix ---
 
     @Test fun buttonUpAtAFullCapStillReleasesTheFinger() {
         holdFinger()
-        fillWithTaps()
+        fill()
         q.enqueue(listOf(drag(1f, 2f, continuing = false)))
         assertTrue(q.size <= ActionQueue.MAX_QUEUE)
         val out = drain()
@@ -179,15 +179,15 @@ class ActionQueueTest {
 
     @Test fun buttonUpAtAFullCapEvictsAnOrdinaryEntryNotAnotherRelease() {
         holdFinger()
-        fillWithTaps()
+        fill()
         q.enqueue(listOf(drag(1f, 2f, continuing = false)))
         assertEquals(ActionQueue.MAX_QUEUE, q.size)
-        assertEquals(ActionQueue.MAX_QUEUE - 1, drain().count { it == tap })
+        assertEquals(ActionQueue.MAX_QUEUE - 1, drain().count { it == Action.Back })
     }
 
     @Test fun buttonUpAtAFullCapThenEndStillReleasesExactlyOnce() {
         holdFinger()
-        fillWithTaps()
+        fill()
         q.enqueue(listOf(drag(1f, 2f, continuing = false)))
         q.endSession(emptyList())
         val out = drain()
@@ -197,15 +197,15 @@ class ActionQueueTest {
 
     @Test fun buttonUpForAStrokeOpenedByAQueuedMoveAlsoSurvivesTheCap() {
         q.enqueue(listOf(drag(0f, 1f, continuing = true)))
-        repeat(ActionQueue.MAX_QUEUE - 1) { q.enqueue(listOf(tap)) }
+        repeat(ActionQueue.MAX_QUEUE - 1) { q.enqueue(listOf(Action.Back)) }
         q.enqueue(listOf(drag(1f, 2f, continuing = false)))
         assertTrue(drain().any { it is Action.Drag && !it.continuing })
     }
 
     @Test fun aTerminalDragWithNoOpenStrokeStillCannotEvictAnything() {
-        fillWithTaps()
+        fill()
         q.enqueue(listOf(drag(1f, 2f, continuing = false)))
-        assertEquals(ActionQueue.MAX_QUEUE, drain().count { it == tap })
+        assertEquals(ActionQueue.MAX_QUEUE, drain().count { it == Action.Back })
     }
 
     @Test fun endWithoutAQueuedReleaseSynthesizesAStationaryOne() {
@@ -224,7 +224,7 @@ class ActionQueueTest {
 
     @Test fun nextSessionsFirstDragHasNoStalePrefix() {
         holdFinger()
-        fillWithTaps()
+        fill()
         q.endSession(emptyList())
         drain()
         q.beginSession()
