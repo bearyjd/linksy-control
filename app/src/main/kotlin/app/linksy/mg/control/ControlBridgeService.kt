@@ -63,7 +63,7 @@ class ControlBridgeService : Service() {
         val pinned = PinnedUid({ linksyUid() }, SystemClock::elapsedRealtime)
         val limiter = UidRateLimiter(SystemClock::elapsedRealtime, isPrivileged = { pinned.matches(it) || session.isOwner(it) })
         val ownerBudget = UidRateLimiter(
-            SystemClock::elapsedRealtime, OWNER_BURST, OWNER_PER_SEC, isPrivileged = { true },
+            SystemClock::elapsedRealtime, BridgeIngress.OWNER_BURST, BridgeIngress.OWNER_PER_SEC, isPrivileged = { true },
         )
         ingress = BridgeIngress(session, limiter, BEGIN_COST, ownerBudget) { pinned.matches(it) }
         instance = this
@@ -171,8 +171,6 @@ class ControlBridgeService : Service() {
 
     companion object {
         private const val BEGIN_COST = 20.0 // a BEGIN costs package and certificate lookups
-        private const val OWNER_BURST = 3000.0 // owner budget: well above a 1000 Hz mouse
-        private const val OWNER_PER_SEC = 1500.0 // sustained rate; beyond it the session ends
 
         /** Set while this service exists, so the settings screen can end a live session on revoke. */
         @Volatile var instance: ControlBridgeService? = null

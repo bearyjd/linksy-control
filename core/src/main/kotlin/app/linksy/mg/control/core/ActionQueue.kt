@@ -12,8 +12,11 @@ import kotlin.math.hypot
  *   whose stroke was really dispatched survives END/BEGIN and runs; otherwise it is skipped. A
  *   terminal drag without an open stroke is an ordinary action: capped and generation-scoped.
  * - At most [maxQueue] actions wait; more are dropped, with one exception: the release of an open
- *   stroke is never dropped by the cap. If the queue is full, an ordinary entry is evicted to make
- *   room (bounded, since only one stroke can be open), so the finger is not left down.
+ *   stroke is never dropped by the cap. It takes one extra slot (bounded, since only one stroke can
+ *   be open and at most one release is queued), so the finger is not left down and no ordinary
+ *   entry is evicted.
+ * - A terminal drag (button-up) for a stroke that was replaced or lost (a wheel swipe, tap, or a
+ *   rejected/cancelled stroke) with no move since is dropped: it must never become a new touch.
  * - A queued move (a continuing Drag) directly followed by another is coalesced into one. The merged
  *   path keeps the polyline (corners and reversals) down-sampled to [GestureMapper.MAX_PATH_POINTS]
  *   and the durations add up, capped at [GestureMapper.MAX_SEGMENT_MS]. Button, key, text, END and
@@ -22,8 +25,9 @@ import kotlin.math.hypot
  *   ended. If segments were dropped or cleared, the next one is prefixed with the last dispatched
  *   endpoint so the stroke stays continuous.
  * - Dispatching a Tap, LongPress or Swipe replaces the held stroke, so the endpoint is forgotten.
- * - After [endSession] or [beginSession] an open stroke always has a release queued (one is
- *   synthesized at the last endpoint if none is), so no endpoint leaks into the next session.
+ * - After [endSession] or [beginSession] a held stroke has exactly one release queued: a single
+ *   stationary lift at the last dispatched endpoint (never a moving one), so no endpoint leaks into
+ *   the next session and releases cannot pile up across BEGIN/END cycles.
  */
 class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
     companion object {
@@ -34,6 +38,9 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
 
     private val items = ArrayDeque<Entry>()
     private var dispatchedEnd: Point? = null
+
+    /** The logical gesture's stroke was replaced or lost and no move has started a new one since. */
+    private var strokeGone = false
 
     var generation = 0L
         private set
@@ -48,14 +55,16 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
     fun enqueue(actions: List<Action>, gen: Long = generation) {
         if (gen != generation) return
         for (a in actions) {
+            if (isMove(a)) strokeGone = false
             val last = items.lastOrNull()
             if (a is Action.Drag && isMove(a) && last != null && !last.release && last.generation == gen &&
                 last.action is Action.Drag && isMove(last.action)
             ) {
                 items[items.lastIndex] = last.copy(action = merge(last.action, a))
             } else if (isTerminalDrag(a) && openStroke()) {
-                if (items.size >= maxQueue) evictOrdinary()
-                items.addLast(Entry(a, gen, release = true))
+                items.addLast(Entry(a, gen, release = true)) // may exceed maxQueue by this one release
+            } else if (isTerminalDrag(a) && strokeGone) {
+                strokeGone = false // the button-up of a gesture whose stroke is gone: not a new touch
             } else if (items.size < maxQueue) {
                 items.addLast(Entry(a, gen))
             }
@@ -78,13 +87,6 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
     }
 
     private fun replacesStroke(a: Action) = a is Action.Tap || a is Action.LongPress || a is Action.Swipe
-
-    /** Makes room for a release: drops the first ordinary entry, preferring one that is not a move. */
-    private fun evictOrdinary() {
-        val i = items.indexOfFirst { !it.release && !isMove(it.action) }.takeIf { it >= 0 }
-            ?: items.indexOfFirst { !it.release }
-        if (i >= 0) items.removeAt(i)
-    }
 
     private fun merge(first: Action.Drag, second: Action.Drag): Action.Drag {
         val joined = if (first.path.lastOrNull() == second.path.firstOrNull()) first.path + second.path.drop(1)
@@ -123,31 +125,18 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
         return hypot(b.x - (a.x + t * dx), b.y - (a.y + t * dy))
     }
 
-    /** A new session starts: ordinary leftovers go, the release of a held finger stays. */
-    fun beginSession() {
-        generation++
-        keepReleases()
-        ensureRelease()
-    }
+    /** A new session starts: ordinary leftovers go, a held finger gets one stationary lift. */
+    fun beginSession() = restart()
 
-    /** The session is over: drop ordinary actions, keep a held finger's release, then queue [releases]. */
-    fun endSession(releases: List<Action>) {
-        generation++
-        keepReleases()
-        for (a in releases) items.addLast(Entry(a, generation, release = true))
-        ensureRelease()
-    }
+    /** The session is over: drop everything, then lift a held finger where it is, once. */
+    fun endSession() = restart()
 
-    private fun keepReleases() {
-        val kept = items.filter { it.release }
+    private fun restart() {
+        generation++
+        strokeGone = false
         items.clear()
-        items.addAll(kept)
-    }
-
-    /** An open stroke with no release queued gets a stationary one at its last endpoint. */
-    private fun ensureRelease() {
         val end = dispatchedEnd ?: return
-        if (items.none { it.release }) items.addLast(Entry(Action.Drag(listOf(end), 1, false), generation, release = true))
+        items.addLast(Entry(Action.Drag(listOf(end), 1, false), generation, release = true))
     }
 
     /** The next action to dispatch, or null. */
@@ -158,13 +147,17 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
             if (e.release) {
                 if (dispatchedEnd == null) continue // nothing is held any more
             } else if (e.generation != generation) continue
-            if (replacesStroke(a)) dispatchedEnd = null
+            if (replacesStroke(a)) {
+                if (dispatchedEnd != null) strokeGone = true
+                dispatchedEnd = null
+            }
             return if (a is Action.Drag) bridge(a) else a
         }
     }
 
     /** The platform cancelled or rejected the stroke; the next drag segment starts a fresh one. */
     fun strokeLost() {
+        if (dispatchedEnd != null) strokeGone = true
         dispatchedEnd = null
     }
 

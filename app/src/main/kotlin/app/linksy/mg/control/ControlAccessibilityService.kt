@@ -38,7 +38,7 @@ class ControlAccessibilityService : AccessibilityService() {
                 enqueue(engine.tick(display())) // may release a held stroke after a display change
                 main.postDelayed(this, TICK_MS)
             } else {
-                finish(engine.tick(display())) // timed out: drop queued input, keep the release
+                engine.tick(display()); finish() // timed out: drop queued input, keep the release
                 ControlBridgeService.instance?.onEngineEnded() // the bridge session ends with it
             }
         }
@@ -70,7 +70,8 @@ class ControlAccessibilityService : AccessibilityService() {
 
     fun endSession() {
         main.removeCallbacks(tick)
-        finish(engine.end(display()))
+        engine.end(display()) // the queue lifts a held finger itself, where it is
+        finish()
     }
 
     fun inject(json: String) {
@@ -81,7 +82,7 @@ class ControlAccessibilityService : AccessibilityService() {
             main.removeCallbacks(tick)
             main.postDelayed(tick, TICK_MS)
         } else {
-            finish(result.actions)
+            finish()
             ControlBridgeService.instance?.onEngineEnded() // expired: the bridge session ends with it
         }
     }
@@ -98,9 +99,9 @@ class ControlAccessibilityService : AccessibilityService() {
         pump()
     }
 
-    /** The session is over: queued ordinary input is dropped; only [releases] and earlier releases run. */
-    private fun finish(releases: List<Action>) {
-        queue.endSession(releases)
+    /** The session is over: queued input is dropped; a held finger gets one stationary lift. */
+    private fun finish() {
+        queue.endSession()
         pump()
     }
 

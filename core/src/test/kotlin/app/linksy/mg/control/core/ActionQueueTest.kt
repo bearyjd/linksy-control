@@ -23,20 +23,19 @@ class ActionQueueTest {
     @Test fun endDropsQueuedOrdinaryActionsButKeepsTheClosingRelease() {
         holdFinger()
         q.enqueue(listOf(tap, Action.Back, drag(1f, 2f, continuing = true)))
-        val release = drag(1f, 2f, continuing = false)
-        q.endSession(listOf(release))
-        assertEquals(listOf(release), drain())
+        q.endSession()
+        assertEquals(listOf(Action.Drag(listOf(p(1f)), 1, false)), drain())
     }
 
     @Test fun releaseWithNoDispatchedStrokeIsDroppedAtEnd() {
         val release = drag(1f, 2f, continuing = false)
-        q.endSession(listOf(release))
+        q.endSession()
         assertTrue(drain().isEmpty())
     }
 
     @Test fun releaseIsDroppedAfterStrokeLost() {
         holdFinger()
-        q.endSession(listOf(drag(1f, 2f, continuing = false)))
+        q.endSession()
         q.strokeLost()
         assertTrue(drain().isEmpty())
     }
@@ -49,21 +48,21 @@ class ActionQueueTest {
 
     @Test fun terminalDragWithoutAnOpenStrokeIsGenerationScoped() {
         val old = q.generation
-        q.endSession(emptyList())
+        q.endSession()
         q.enqueue(listOf(drag(0f, 1f, continuing = false)), old)
         assertTrue(drain().isEmpty())
     }
 
     @Test fun terminalDragWithoutAnOpenStrokeDoesNotRunAfterEnd() {
         q.enqueue(listOf(drag(0f, 1f, continuing = false)))
-        q.endSession(emptyList())
+        q.endSession()
         q.beginSession()
         assertTrue(drain().isEmpty())
     }
 
     @Test fun onlyTheFirstOfTwoReleasesRuns() {
         holdFinger()
-        q.endSession(listOf(drag(1f, 2f, continuing = false), drag(1f, 3f, continuing = false)))
+        q.endSession()
         assertEquals(1, drain().size)
     }
 
@@ -97,7 +96,7 @@ class ActionQueueTest {
 
     @Test fun nothingQueuedBeforeEndRunsAfterALaterBegin() {
         q.enqueue(listOf(tap, Action.Home, drag(0f, 1f, continuing = true)))
-        q.endSession(emptyList())
+        q.endSession()
         q.beginSession()
         assertTrue(drain().isEmpty())
     }
@@ -114,7 +113,7 @@ class ActionQueueTest {
     @Test fun replacingBeginNeverDeletesAPendingRelease() {
         holdFinger()
         val release = drag(1f, 2f, continuing = false)
-        q.endSession(listOf(release))
+        q.endSession()
         q.beginSession()
         q.enqueue(listOf(Action.Back))
         val out = drain()
@@ -143,8 +142,8 @@ class ActionQueueTest {
     @Test fun segmentsClearedByEndAreBridgedToo() {
         q.enqueue(listOf(drag(0f, 1f, true), tap, drag(1f, 2f, true)))
         q.next()
-        q.endSession(listOf(drag(2f, 3f, false)))
-        assertEquals(listOf(p(1f), p(2f), p(3f)), assertIs<Action.Drag>(q.next()).path)
+        q.endSession()
+        assertEquals(listOf(p(1f)), assertIs<Action.Drag>(q.next()).path)
         assertNull(q.next())
     }
 
@@ -171,25 +170,25 @@ class ActionQueueTest {
         holdFinger()
         fill()
         q.enqueue(listOf(drag(1f, 2f, continuing = false)))
-        assertTrue(q.size <= ActionQueue.MAX_QUEUE)
+        assertTrue(q.size <= ActionQueue.MAX_QUEUE + 1)
         val out = drain()
         val last = assertIs<Action.Drag>(out.last())
         assertEquals(false, last.continuing)
     }
 
-    @Test fun buttonUpAtAFullCapEvictsAnOrdinaryEntryNotAnotherRelease() {
+    @Test fun buttonUpAtAFullCapTakesOneExtraSlotAndEvictsNothing() {
         holdFinger()
         fill()
         q.enqueue(listOf(drag(1f, 2f, continuing = false)))
-        assertEquals(ActionQueue.MAX_QUEUE, q.size)
-        assertEquals(ActionQueue.MAX_QUEUE - 1, drain().count { it == Action.Back })
+        assertEquals(ActionQueue.MAX_QUEUE + 1, q.size)
+        assertEquals(ActionQueue.MAX_QUEUE, drain().count { it == Action.Back })
     }
 
     @Test fun buttonUpAtAFullCapThenEndStillReleasesExactlyOnce() {
         holdFinger()
         fill()
         q.enqueue(listOf(drag(1f, 2f, continuing = false)))
-        q.endSession(emptyList())
+        q.endSession()
         val out = drain()
         assertEquals(1, out.size)
         assertEquals(false, assertIs<Action.Drag>(out.single()).continuing)
@@ -210,7 +209,7 @@ class ActionQueueTest {
 
     @Test fun endWithoutAQueuedReleaseSynthesizesAStationaryOne() {
         holdFinger()
-        q.endSession(emptyList())
+        q.endSession()
         val out = assertIs<Action.Drag>(q.next())
         assertEquals(false, out.continuing)
         assertEquals(listOf(p(1f)), out.path)
@@ -218,14 +217,14 @@ class ActionQueueTest {
     }
 
     @Test fun nothingIsSynthesizedWhenNoStrokeIsOpen() {
-        q.endSession(emptyList())
+        q.endSession()
         assertTrue(drain().isEmpty())
     }
 
     @Test fun nextSessionsFirstDragHasNoStalePrefix() {
         holdFinger()
         fill()
-        q.endSession(emptyList())
+        q.endSession()
         drain()
         q.beginSession()
         q.enqueue(listOf(drag(5f, 6f, continuing = true)))
@@ -243,9 +242,9 @@ class ActionQueueTest {
 
     @Test fun dispatchedReleaseClosesTheStroke() {
         holdFinger()
-        q.endSession(listOf(drag(1f, 2f, continuing = false)))
+        q.endSession()
         drain()
-        q.endSession(emptyList())
+        q.endSession()
         assertTrue(drain().isEmpty())
     }
 
@@ -263,7 +262,7 @@ class ActionQueueTest {
             queue.next()
             queue.enqueue(listOf(r))
             assertEquals(r, queue.next())
-            queue.endSession(listOf(drag(1f, 2f, continuing = false)))
+            queue.endSession()
             assertNull(queue.next(), "no release without an open stroke after $r")
         }
     }
@@ -271,10 +270,10 @@ class ActionQueueTest {
     @Test fun aWheelSwipeStillQueuedAtEndDoesNotHideTheRealRelease() {
         holdFinger()
         q.enqueue(listOf(Action.Swipe(Point(0f, 0f), Point(0f, 9f), 200)))
-        q.endSession(listOf(drag(1f, 2f, continuing = false)))
+        q.endSession()
         val out = drain()
         assertEquals(1, out.size)
-        assertEquals(listOf(p(1f), p(2f)), assertIs<Action.Drag>(out.single()).path)
+        assertEquals(listOf(p(1f)), assertIs<Action.Drag>(out.single()).path)
     }
 
     @Test fun nextDragAfterAWheelSwipeIsNotPrefixedWithTheOldEndpoint() {
@@ -384,7 +383,7 @@ class ActionQueueTest {
 
     @Test fun aMovingFiveSecondReleaseAtEndBecomesOneStationaryLift() {
         holdFinger()
-        q.endSession(listOf(Action.Drag(listOf(p(1f), p(9f)), 5000, false)))
+        q.endSession()
         val out = drain().map { assertIs<Action.Drag>(it) }
         assertEquals(1, out.size)
         assertEquals(listOf(p(1f)), out.single().path)
@@ -394,7 +393,7 @@ class ActionQueueTest {
     @Test fun releasesDoNotPileUpAcrossBeginEndCycles() {
         holdFinger()
         repeat(1000) {
-            q.endSession(listOf(drag(1f, 2f, continuing = false)))
+            q.endSession()
             q.beginSession()
         }
         assertTrue(q.size <= 1, "size=${q.size}")

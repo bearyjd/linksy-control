@@ -51,3 +51,17 @@ below; the Android behavior itself (that the platform really lifts the finger) r
 
 Untested glue (needs a device): the `dispatchGesture` rejection path, the bridge/engine expiry hook, the
 `getPackageUid` lookup.
+
+# Review round 4
+
+Round 4: Codex found one MEDIUM (confirmed by a probe); the opus security review rated the PR clean with five LOWs.
+
+| # | Finding | Disposition |
+|---|---------|-------------|
+| 1 | MEDIUM (Codex): drag dispatched, a wheel swipe replaces it (the queue forgets the endpoint) while the mapper is still DRAGGING; the later button-up emits a terminal drag that, with no open stroke, was queued as an ordinary action and dispatched as a fresh short stroke (phantom touch). Same after a rejected stroke | Fixed in `ActionQueue`: it remembers that the gesture's stroke was replaced or lost (`strokeGone`) and drops the next terminal drag unless a move has started a new stroke. A terminal-only quick drag and taps are unchanged. The mapper is not reset: later moves still start a fresh stroke and get their own release. |
+| 2 | LOW (security 1, 3): a kept release could keep moving the finger for up to 5 s after END, and releases piled up across BEGIN/END cycles past the cap | Fixed. `endSession()` and `beginSession()` drop every queued entry and queue ONE stationary lift at the last dispatched endpoint (none if nothing is held). `endSession` no longer takes the mapper's releases. |
+| 3 | LOW (security 2): evicting an ordinary entry for a release that was then skipped lost typed text | Fixed. The release takes one extra slot (`maxQueue + 1`); nothing is evicted. At most one release is queued. |
+| 4 | LOW (Codex 2): at 63 pending points each new point replaced the tail, losing an A-B-A excursion inside one 50 ms window | Fixed. At capacity the interior point that bends the path least is dropped. |
+| 5 | LOW (security 4, 5, Codex): README overclaim on colluding uids; PinnedUid stale for 10 s after reinstall; client obligations; production constants untested; `BridgeIngress` default clock `{ 0L }` never refills | Fixed. README states what the bucket isolation proves, the possible WRONG_PACKAGE window, re-BEGIN after an ended session and the ~1500 msg/s limit. `PinnedUid` re-resolves a mismatching sender once per second at most. `OWNER_BURST`/`OWNER_PER_SEC` moved to `BridgeIngress` and tests assert 1200 Hz is admitted for a minute and 5000/s trips. `ownerLimiter` has no default. Not done: a `REPLY_ENDED` notification (not trivial; documented instead). |
+
+Defaults chosen: lift duration 1 ms; recheck interval 1 s; re-resolve applies to every mismatching sender (bounded by the interval, not only BEGIN).

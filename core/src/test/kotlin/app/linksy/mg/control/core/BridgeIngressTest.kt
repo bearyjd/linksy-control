@@ -87,4 +87,29 @@ class BridgeIngressTest {
         }
         assertEquals(101, admitted)
     }
+
+    private fun productionOwner(rateHz: Int, seconds: Int): Admission {
+        var t = 0L
+        val ing = BridgeIngress(
+            session, limiter,
+            ownerLimiter = UidRateLimiter({ t }, BridgeIngress.OWNER_BURST, BridgeIngress.OWNER_PER_SEC, isPrivileged = { true }),
+            isLinksyUid = { it == linksyUid },
+        )
+        open()
+        var last = Admission.ADMIT
+        repeat(rateHz * seconds) {
+            t = it * 1000L / rateHz
+            last = ing.admit(linksyUid, isBegin = false)
+            if (last != Admission.ADMIT) return last
+        }
+        return last
+    }
+
+    @Test fun productionBudgetAdmitsAThousandHzMousePlusFastTypingForAMinute() {
+        assertEquals(Admission.ADMIT, productionOwner(rateHz = 1200, seconds = 60))
+    }
+
+    @Test fun productionBudgetTripsAtFiveThousandPerSecond() {
+        assertEquals(Admission.OWNER_OVER_BUDGET, productionOwner(rateHz = 5000, seconds = 10))
+    }
 }

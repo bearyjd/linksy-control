@@ -96,7 +96,7 @@ class GestureMapper {
         if (g.phase == Phase.PRESSED && distancePx(g.down, p, d) > SLOP_PX) next = g.copy(phase = Phase.DRAGGING)
         if (next.phase != Phase.DRAGGING) return MapResult()
         val room = MAX_PATH_POINTS - 1
-        val pending = if (next.pending.size < room) next.pending + p else next.pending.dropLast(1) + p
+        val pending = if (next.pending.size < room) next.pending + p else dropFlattest(next.lastEmitted, next.pending + p, d)
         next = next.copy(pending = pending)
         if (now - next.lastEmitMs < SEGMENT_MS) {
             gesture = next
@@ -105,6 +105,31 @@ class GestureMapper {
         val (action, after) = segment(next, d, now, continuing = true)
         gesture = after
         return MapResult(listOf(action))
+    }
+
+    /** At capacity: drops the interior point that bends the path least, so a short excursion survives. */
+    private fun dropFlattest(start: FPoint, points: List<FPoint>, d: Display): List<FPoint> {
+        var drop = 0
+        var least = Double.MAX_VALUE
+        for (i in 0 until points.lastIndex) {
+            val dev = deviationPx(if (i == 0) start else points[i - 1], points[i], points[i + 1], d)
+            if (dev < least) {
+                least = dev
+                drop = i
+            }
+        }
+        return points.filterIndexed { i, _ -> i != drop }
+    }
+
+    private fun deviationPx(a: FPoint, b: FPoint, c: FPoint, d: Display): Double {
+        val ax = a.x * d.width; val ay = a.y * d.height
+        val dx = c.x * d.width - ax
+        val dy = c.y * d.height - ay
+        val len2 = dx * dx + dy * dy
+        val bx = b.x * d.width - ax
+        val by = b.y * d.height - ay
+        val t = if (len2 == 0.0) 0.0 else ((bx * dx + by * dy) / len2).coerceIn(0.0, 1.0)
+        return kotlin.math.hypot(bx - t * dx, by - t * dy)
     }
 
     private fun button(o: JsonObject, d: Display, now: Long): MapResult {

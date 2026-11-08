@@ -45,7 +45,7 @@ class StrokeTrackerTest {
         dispatchContinuingSegment()
         t.cancelled()
         assertNull(t.continuation(fresh = false))
-        q.endSession(emptyList())
+        q.endSession()
         assertNull(q.next()) // no release for a finger Android no longer has down
     }
 }

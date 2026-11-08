@@ -32,9 +32,15 @@ class BridgeIngress(
     private val session: BridgeSession,
     private val limiter: UidRateLimiter,
     private val beginCost: Double = 20.0,
-    private val ownerLimiter: UidRateLimiter = UidRateLimiter({ 0L }, capacity = 3000.0, refillPerSec = 1500.0, isPrivileged = { true }),
+    private val ownerLimiter: UidRateLimiter,
     private val isLinksyUid: (Int) -> Boolean = { true },
 ) {
+    companion object {
+        /** Owner budget: well above a 1000 Hz mouse plus 200 keys/s; beyond it the session ends. */
+        const val OWNER_BURST = 3000.0
+        const val OWNER_PER_SEC = 1500.0
+    }
+
     fun admit(sender: Int, isBegin: Boolean, isEnd: Boolean = false): Admission = when {
         isBegin && !isLinksyUid(sender) ->
             if (limiter.allow(sender)) Admission.WRONG_PACKAGE else Admission.BUSY
