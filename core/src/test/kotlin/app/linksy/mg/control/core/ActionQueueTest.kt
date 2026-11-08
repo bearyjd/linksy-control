@@ -531,4 +531,77 @@ class ActionQueueTest {
         q.enqueue(listOf(drag(0f, 1f, continuing = false, id = 1000)))
         assertNull(q.next()) // the newest loss is still remembered
     }
+
+    // --- round 4 addendum 3: moves queued before a stroke loss belong to the lost stroke ---
+
+    private fun queuedBeforeLoss(): Action.Drag {
+        holdFinger(1) // M10 dispatched
+        val m11 = drag(1f, 2f, continuing = true, id = 1)
+        q.enqueue(listOf(m11))
+        q.enqueue(listOf(drag(2f, 3f, continuing = false, id = 1))) // queued release
+        return m11
+    }
+
+    @Test fun lostNoPostLossMovesTerminalDroppedNothingDispatched() {
+        queuedBeforeLoss()
+        q.strokeLost()
+        assertTrue(drain().isEmpty())
+    }
+
+    @Test fun lostPostLossMovesFreshStrokeIsDispatchedThenReleased() {
+        queuedBeforeLoss()
+        q.strokeLost()
+        val m20 = drag(5f, 6f, continuing = true, id = 1)
+        q.enqueue(listOf(m20))
+        val out = drain()
+        assertEquals(2, out.size, "$out")
+        assertEquals(m20, out[0]) // not merged with the pre-loss M11, no bridge to the old stroke
+        assertEquals(false, assertIs<Action.Drag>(out[1]).continuing)
+    }
+
+    @Test fun lostMoreThanOnePostLossMoveStillEndsWithARelease() {
+        queuedBeforeLoss()
+        q.strokeLost()
+        q.enqueue(listOf(drag(5f, 6f, continuing = true, id = 1)))
+        q.enqueue(listOf(drag(6f, 7f, continuing = true, id = 1)))
+        val out = drain()
+        assertEquals(false, assertIs<Action.Drag>(out.last()).continuing)
+        assertTrue(out.dropLast(1).all { (it as Action.Drag).continuing && it.path.first().y >= 5f }, "$out")
+    }
+
+    @Test fun preLossQueuedMovesAreNeverDispatchedAfterTheLoss() {
+        val m11 = queuedBeforeLoss()
+        q.strokeLost()
+        q.enqueue(listOf(drag(5f, 6f, continuing = true, id = 1)))
+        assertTrue(drain().none { it is Action.Drag && it.path.contains(p(2f)) && it.path.contains(p(1f)) }, "$m11")
+    }
+
+    @Test fun swipeReplacementDiscardsQueuedMovesOfTheLostGesture() {
+        holdFinger(1)
+        val swipe = Action.Swipe(Point(0f, 0f), Point(0f, 9f), 100)
+        q.enqueue(listOf(swipe, drag(1f, 2f, continuing = true, id = 1), drag(2f, 3f, continuing = false, id = 1)))
+        assertEquals(swipe, q.next())
+        assertTrue(drain().isEmpty())
+    }
+
+    @Test fun swipeReplacementThenPostLossMoveIsReleased() {
+        holdFinger(1)
+        val swipe = Action.Swipe(Point(0f, 0f), Point(0f, 9f), 100)
+        q.enqueue(listOf(swipe, drag(1f, 2f, continuing = true, id = 1), drag(2f, 3f, continuing = false, id = 1)))
+        assertEquals(swipe, q.next())
+        val m20 = drag(5f, 6f, continuing = true, id = 1)
+        q.enqueue(listOf(m20))
+        val out = drain()
+        assertEquals(m20, out.first())
+        assertEquals(false, assertIs<Action.Drag>(out.last()).continuing)
+        assertEquals(2, out.size, "$out")
+    }
+
+    @Test fun otherGesturesMovesSurviveTheLoss() {
+        holdFinger(1)
+        val other = drag(8f, 9f, continuing = true, id = 2)
+        q.enqueue(listOf(other))
+        q.strokeLost()
+        assertEquals(other, q.next())
+    }
 }
