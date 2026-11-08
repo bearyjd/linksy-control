@@ -26,8 +26,18 @@ whatever other apps then do with that input (including sending data) is out of t
 It uses only routes Android supports and you turn on yourself. It does not ask you to disable Play
 Protect, and does not hide that it is an Accessibility service. If your phone refuses to install or
 enable it, the fallback ladder applies: (1) full touch control with this app, (2) typing via the
-Linksy keyboard, (3) full control over the USB cable, (4) view only. See the "Ground rule" section
-of the Linksy plan (`phone-control-over-wifi.md` §0).
+Linksy keyboard, (3) full control over the USB cable, (4) view only.
+
+## Works with
+
+This is a separate, optional project; it does nothing on its own. It pairs with the Linksy phone app:
+
+- [LinkSy-mg/linksy-mobile](https://github.com/LinkSy-mg/linksy-mobile), the Linksy phone app (package `app.linksy.mg`).
+- [bearyjd/linksy-mobile](https://github.com/bearyjd/linksy-mobile), a fork where the Linksy Keyboard and the
+  client for this app are being developed. Neither is part of the upstream project yet.
+
+The desktop side is [LinkSy-mg/linksy-desktop](https://github.com/LinkSy-mg/linksy-desktop). This project is
+not affiliated with or endorsed by the Linksy maintainers.
 
 ## Turn it on
 
@@ -74,7 +84,7 @@ SDK (platform 35) via `local.properties` (`sdk.dir=...`). No Gradle wrapper is c
 
 ## Verification
 
-`core/` is unit tested (93 tests) and `app/` compiles and passes lint. Nothing has been run on a
+`core/` is unit tested (107 tests) and `app/` compiles and passes lint. Nothing has been run on a
 device, ever: the Accessibility behavior (gestures, set-text, pairing screen, binding) is UNVERIFIED.
 
 See `PRIVACY.md`, `CHANGELOG.md` and `docs/REVIEWS.md`. No LICENSE file yet: the Linksy desktop repo is AGPL-3.0 but the
