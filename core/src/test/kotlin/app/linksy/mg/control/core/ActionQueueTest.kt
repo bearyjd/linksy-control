@@ -332,4 +332,89 @@ class ActionQueueTest {
         assertTrue(path.maxOf { it.y } >= 190f, "the turnaround must survive")
         assertEquals(p(0f), path.last())
     }
+
+    // --- round 4 ---
+
+    private val swipe = Action.Swipe(Point(0f, 0f), Point(0f, 9f), 200)
+
+    @Test fun aButtonUpAfterAReplacingSwipeIsNotAPhantomTouch() {
+        holdFinger()
+        q.enqueue(listOf(swipe))
+        assertEquals(swipe, q.next())
+        q.enqueue(listOf(drag(1f, 2f, continuing = false)))
+        assertNull(q.next())
+        assertEquals(0, q.size)
+    }
+
+    @Test fun aButtonUpAfterARejectedStrokeIsNotAPhantomTouch() {
+        holdFinger()
+        q.strokeLost()
+        q.enqueue(listOf(drag(1f, 2f, continuing = false)))
+        assertNull(q.next())
+    }
+
+    @Test fun theWholeMapperScenarioDispatchDragSwipeButtonUpMakesNoTouch() {
+        val m = GestureMapper()
+        val d = Display(1000, 2000)
+        fun feed(json: String, t: Long) = q.enqueue(m.handle(json, d, t).actions)
+        feed("""{"type":"pointer","x":0.5,"y":0.5}""", 0)
+        feed("""{"type":"button","button":"left","pressed":true}""", 0)
+        feed("""{"type":"pointer","x":0.6,"y":0.5}""", 60)
+        assertIs<Action.Drag>(q.next())
+        feed("""{"type":"scroll","dx":0,"dy":1,"discrete":true}""", 70)
+        assertIs<Action.Swipe>(q.next())
+        feed("""{"type":"button","button":"left","pressed":false}""", 90)
+        assertNull(q.next())
+    }
+
+    @Test fun aDragWholeInOneTerminalSegmentAndPlainTapsStillDispatch() {
+        q.enqueue(listOf(drag(0f, 1f, continuing = false), tap))
+        assertEquals(drag(0f, 1f, continuing = false), q.next())
+        assertEquals(tap, q.next())
+    }
+
+    @Test fun aNewMoveAfterALostStrokeStillGetsItsRelease() {
+        holdFinger()
+        q.strokeLost()
+        q.enqueue(listOf(drag(5f, 6f, continuing = true)))
+        q.next()
+        q.enqueue(listOf(drag(6f, 7f, continuing = false)))
+        assertEquals(false, assertIs<Action.Drag>(q.next()).continuing)
+    }
+
+    @Test fun aMovingFiveSecondReleaseAtEndBecomesOneStationaryLift() {
+        holdFinger()
+        q.endSession(listOf(Action.Drag(listOf(p(1f), p(9f)), 5000, false)))
+        val out = drain().map { assertIs<Action.Drag>(it) }
+        assertEquals(1, out.size)
+        assertEquals(listOf(p(1f)), out.single().path)
+        assertTrue(out.single().durationMs <= 10)
+    }
+
+    @Test fun releasesDoNotPileUpAcrossBeginEndCycles() {
+        holdFinger()
+        repeat(1000) {
+            q.endSession(listOf(drag(1f, 2f, continuing = false)))
+            q.beginSession()
+        }
+        assertTrue(q.size <= 1, "size=${q.size}")
+    }
+
+    @Test fun aReleaseThatIsSkippedNeverEvictsTypedText() {
+        holdFinger()
+        q.enqueue(List(31) { Action.SetText("x") } + swipe)
+        q.enqueue(listOf(drag(1f, 2f, continuing = false)))
+        val out = drain()
+        assertEquals(31, out.count { it is Action.SetText })
+        assertEquals(1, out.count { it is Action.Swipe })
+    }
+
+    @Test fun aKeptReleaseTakesAnExtraSlotInsteadOfEvicting() {
+        holdFinger()
+        q.enqueue(List(ActionQueue.MAX_QUEUE) { Action.SetText("x") })
+        q.enqueue(listOf(drag(1f, 2f, continuing = false)))
+        val out = drain()
+        assertEquals(ActionQueue.MAX_QUEUE, out.count { it is Action.SetText })
+        assertEquals(false, assertIs<Action.Drag>(out.last()).continuing)
+    }
 }

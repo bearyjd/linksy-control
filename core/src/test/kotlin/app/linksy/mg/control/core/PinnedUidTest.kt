@@ -43,4 +43,21 @@ class PinnedUidTest {
         repeat(100) { pinned.matches(2) }
         assertEquals(1, lookups)
     }
+
+    @Test fun aMismatchOlderThanOneSecondReResolvesOnce() {
+        assertTrue(pinned.matches(10_001))
+        uid = 10_050 // reinstalled
+        now += 1_000
+        assertTrue(pinned.matches(10_050))
+        assertEquals(2, lookups)
+    }
+
+    @Test fun mismatchTrafficCausesAtMostOneLookupPerSecond() {
+        pinned.matches(1)
+        repeat(1000) { pinned.matches(20_000 + it) }
+        assertEquals(1, lookups)
+        now += 1_000
+        repeat(1000) { pinned.matches(30_000 + it) }
+        assertEquals(2, lookups)
+    }
 }

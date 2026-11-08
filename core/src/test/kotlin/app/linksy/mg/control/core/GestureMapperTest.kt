@@ -247,4 +247,14 @@ class GestureMapperTest {
     @Test fun neverRejectsValidMessage() {
         assertNull(send(ptr(0.1, 0.1)).rejected)
     }
+
+    @Test fun anExcursionAfterManyPendingPointsIsNotLost() {
+        acts(ptr(0.5, 0.5)); acts(btn("left", true), 0)
+        for (i in 0 until 70) acts(ptr(0.52 + i * 0.001, 0.5), 10)
+        acts(ptr(0.6, 0.6), 10) // B: 200 px off the line
+        acts(ptr(0.6, 0.5), 10) // back
+        val drag = assertIs<Action.Drag>(acts(btn("left", false), 20).single())
+        assertTrue(drag.path.any { it.y > 1100f }, "excursion kept: ${drag.path}")
+        assertTrue(drag.path.size <= GestureMapper.MAX_PATH_POINTS)
+    }
 }
