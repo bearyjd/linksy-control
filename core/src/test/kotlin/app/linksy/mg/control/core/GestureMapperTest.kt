@@ -44,7 +44,9 @@ class GestureMapperTest {
         acts(ptr(0.5, 0.5)); acts(btn("left", true), 0)
         acts(ptr(0.5, 0.6), 400)
         val out = acts(btn("left", false), 800)
+        assertTrue(out.isNotEmpty())
         assertTrue(out.all { it is Action.Drag })
+        assertEquals(false, assertIs<Action.Drag>(out.last()).continuing)
     }
 
     @Test fun dragEmitsContinuousSegmentsEndingNotContinuing() {
@@ -90,8 +92,13 @@ class GestureMapperTest {
 
     @Test fun duplicateDownKeepsOriginalGesture() {
         acts(ptr(0.5, 0.5)); acts(btn("left", true), 0)
-        acts(ptr(0.9, 0.9), 5) // 5 ms: still counts as movement far away -> drag state, no emit yet
+        acts(ptr(0.9, 0.9), 5) // 5 ms: far move -> drag state, no emit yet
         assertTrue(acts(btn("left", true), 10).isEmpty())
+        // A restarted gesture would end as a Tap; the original one ends as a drag from the first press.
+        val drag = assertIs<Action.Drag>(acts(btn("left", false), 100).single())
+        assertEquals(Point(500f, 1000f), drag.path.first())
+        assertEquals(Point(900f, 1800f), drag.path.last())
+        assertEquals(false, drag.continuing)
     }
 
     @Test fun rightIsBackMiddleIsHomeReleaseIgnored() {

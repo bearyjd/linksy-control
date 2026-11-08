@@ -69,4 +69,11 @@ class CallerAuthTest {
         store.approve(pkg, pin)
         assertEquals(AuthDecision.ALLOWED, auth().check(pkg, listOf("00".repeat(32), pin)))
     }
+
+    @Test fun matchedCertIsThePinMatchingOneNotTheFirst() {
+        val other = "cd34".repeat(16)
+        assertEquals(pin, auth().matchedCert(listOf(other, pin.uppercase())))
+        assertEquals(null, auth().matchedCert(listOf(other)))
+        assertEquals(null, auth(pin = "").matchedCert(listOf(pin)))
+    }
 }

@@ -72,4 +72,19 @@ class ControlEngineTest {
         now += 61_000; assertEquals(false, e.isActive())
         e.begin(); e.end(d); assertEquals(false, e.isActive())
     }
+
+    @Test fun displayChangeReleasesAHeldDragInTheOldCoordinates() {
+        e.begin(); e.inject(ptr(0.5), d); e.inject(down, d); now = 100; e.inject(ptr(0.8), d)
+        now = 200
+        val r = e.inject(ptr(0.9), Display(2000, 1000))
+        val release = assertIs<Action.Drag>(r.actions.single())
+        assertEquals(false, release.continuing)
+        assertEquals(Point(500f, 1800f), release.path.last())
+        assertTrue(e.inject(up, Display(2000, 1000)).actions.isEmpty())
+    }
+
+    @Test fun sameDisplayDoesNotReleaseAnything() {
+        e.begin(); e.inject(ptr(0.5), d); e.inject(down, d); now = 100; e.inject(ptr(0.8), d)
+        assertTrue(e.inject(ptr(0.85), d).actions.none { it is Action.Drag && !it.continuing })
+    }
 }
