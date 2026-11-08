@@ -79,7 +79,7 @@ class ControlEngineTest {
         val r = e.inject(ptr(0.9), Display(2000, 1000))
         val release = assertIs<Action.Drag>(r.actions.single())
         assertEquals(false, release.continuing)
-        assertEquals(Point(500f, 1800f), release.path.last())
+        assertEquals(Point(500f, 1600f), release.path.last())
         assertTrue(e.inject(up, Display(2000, 1000)).actions.isEmpty())
     }
 

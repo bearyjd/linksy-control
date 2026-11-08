@@ -10,8 +10,11 @@ class ControlEngine(
     private val gate: SessionGate = SessionGate(clock),
     private val mapper: GestureMapper = GestureMapper(),
 ) {
+    private var shown: Display? = null
+
     @Synchronized fun begin() {
         mapper.reset()
+        shown = null
         gate.begin()
     }
 
@@ -20,16 +23,33 @@ class ControlEngine(
     /** Ends the session; returns actions that release any gesture still held. */
     @Synchronized fun end(display: Display): List<Action> {
         gate.end()
-        return mapper.release(display, clock())
+        val at = shown ?: display
+        shown = null
+        return mapper.release(at, clock())
     }
 
     /** Call periodically while a session is live: closes it on timeout and releases held input. */
-    @Synchronized fun tick(display: Display): List<Action> =
-        if (gate.expireIfDue()) mapper.release(display, clock()) else emptyList()
+    @Synchronized fun tick(display: Display): List<Action> {
+        if (gate.expireIfDue()) {
+            val at = shown ?: display
+            shown = null
+            return mapper.release(at, clock())
+        }
+        return if (gate.isActive()) displayChanged(display) else emptyList()
+    }
+
+    /** A held drag cannot survive a display change (rotation): release it in the old coordinates. */
+    private fun displayChanged(display: Display): List<Action> {
+        if (!display.valid) return emptyList()
+        val previous = shown
+        shown = display
+        return if (previous != null && previous != display) mapper.release(previous, clock()) else emptyList()
+    }
 
     @Synchronized fun inject(json: String, display: Display): MapResult {
         val released = tick(display)
         if (!gate.touch()) return MapResult(released)
-        return mapper.handle(json, display, clock())
+        val result = mapper.handle(json, display, clock())
+        return if (released.isEmpty()) result else result.copy(actions = released + result.actions)
     }
 }

@@ -54,7 +54,7 @@ class CallerAuth(
     fun checkIdentity(pkg: String, certSha256: Collection<String>): AuthDecision {
         if (!enabled) return AuthDecision.DISABLED_NOT_CONFIGURED
         if (pkg != linksyPackage) return AuthDecision.WRONG_PACKAGE
-        if (matchingCert(certSha256) == null) return AuthDecision.WRONG_CERT
+        if (matchedCert(certSha256) == null) return AuthDecision.WRONG_CERT
         return AuthDecision.ALLOWED
     }
 
@@ -62,11 +62,13 @@ class CallerAuth(
     fun check(pkg: String, certSha256: Collection<String>): AuthDecision {
         val identity = checkIdentity(pkg, certSha256)
         if (identity != AuthDecision.ALLOWED) return identity
-        val cert = matchingCert(certSha256) ?: return AuthDecision.WRONG_CERT
+        val cert = matchedCert(certSha256) ?: return AuthDecision.WRONG_CERT
         return if (approvals.isApproved(pkg, cert)) AuthDecision.ALLOWED else AuthDecision.NOT_APPROVED
     }
 
-    private fun matchingCert(certs: Collection<String>): String? {
+    /** The caller's certificate (normalized) that equals the pin, or null. Store this one, not the first. */
+    fun matchedCert(certs: Collection<String>): String? {
+        if (!enabled) return null
         val pinBytes = pin.toByteArray()
         return certs.map { normalizeHex(it) }.firstOrNull { MessageDigest.isEqual(it.toByteArray(), pinBytes) }
     }

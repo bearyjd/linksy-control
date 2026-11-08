@@ -19,7 +19,7 @@ class ActionQueueTest {
         q.enqueue(listOf(tap, Action.Back, drag(0f, 1f, continuing = true)))
         val release = drag(1f, 2f, continuing = false)
         q.endSession(listOf(release))
-        assertEquals(listOf(release), drain().map { it.copy1() })
+        assertEquals(listOf(release), drain())
     }
 
     @Test fun nothingOrdinaryRunsAfterEndEvenIfEnqueuedWithTheOldGeneration() {
@@ -96,5 +96,4 @@ class ActionQueueTest {
         assertEquals(listOf(p(5f), p(6f)), assertIs<Action.Drag>(q.next()).path)
     }
 
-    private fun Action.copy1(): Action = this
 }
