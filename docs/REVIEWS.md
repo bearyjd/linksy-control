@@ -76,3 +76,15 @@ Codex re-reviewed the round 4 delta (dea26cb..5be0c57) and confirmed two more ME
 | 2 | MEDIUM: a skipped release (`dispatchedEnd == null`) left `strokeGone` set, so the next independent quick drag (terminal only) was silently dropped | Fixed: skipping a release clears the flag, since the gesture it belonged to is over. Test: drag, swipe, button-up, then a new quick drag dispatches. |
 | 3 | LOW: three ActionQueue tests could not fail (unused local, a single release, no moving release) | Strengthened: a moving 5000 ms release is queued, two releases are supplied, the unused local is gone. |
 | 4 | Privacy: commit 5be0c57 accidentally tracked local tool state (`.omc/STATE.md`, `.omc/state/**`; no secrets) | `.omc/` and `.claude/` are untracked and git-ignored. The files stay in PR history; the squash merge keeps main clean (a force-push would not purge them from GitHub either). |
+
+## Round 4 addendum 2
+
+Codex's quick check showed the single global `strokeGone` flag is the wrong shape: it names no gesture, so it goes stale or hits the wrong one.
+
+| # | Finding | Disposition |
+|---|---------|-------------|
+| 1 | MEDIUM: drag dispatched, a recovered move admitted (clears the flag), `strokeLost()` sets it again, the recovered stroke and its button-up dispatch, and the flag is never cleared; the next independent quick drag is dropped | Fixed by replacing the flag. `GestureMapper` stamps every action of a logical gesture with a monotonic `gestureId`; `ActionQueue` keeps a bounded ring `lostGestures` of ids whose stroke was replaced or lost. A terminal drag is dropped iff its own id is in the ring; the id is removed when that terminal is dropped or skipped, when a move of the gesture is admitted or dispatched (fresh stroke), and on END/BEGIN. |
+| 2 | MEDIUM: drag A dispatched, Swipe and A's button-up queued; the swipe sets the flag, an independent quick drag enqueued before `next()` reaches A's old release is dropped instead of that release | Fixed by the same change: the swipe marks A lost, the quick drag has another id and runs, and A's old release is skipped at dispatch. |
+
+Tests: both sequences, drag-swipe-button-up and drag-rejected-button-up (no touch), Back/Home/SetText keep the release, a new drag with moves after a swipe releases, recovered stroke then quick drag, END/BEGIN clears the ring, the ring stays bounded (`MAX_LOST` = 8) under a flood, mapper id monotonicity. Residual: a loss older than the last 8 lost gestures is forgotten; a gesture's button-up cannot arrive after 8 later gestures were all lost, because the mapper emits one gesture at a time.
+

@@ -45,6 +45,7 @@ class GestureMapper {
     private data class FPoint(val x: Double, val y: Double)
 
     private data class Gesture(
+        val id: Long,
         val phase: Phase,
         val down: FPoint,
         val downMs: Long,
@@ -55,6 +56,7 @@ class GestureMapper {
 
     private var lastPointer: FPoint? = null
     private var gesture: Gesture? = null
+    private var lastGestureId = Action.Drag.NO_GESTURE // monotonic, never reset
 
     fun handle(json: String, display: Display, nowMs: Long): MapResult {
         if (json.length > MAX_MESSAGE_CHARS) return MapResult(rejected = Reject.TOO_LARGE)
@@ -146,7 +148,7 @@ class GestureMapper {
     private fun leftDown(now: Long): MapResult {
         val at = lastPointer
         if (at != null && gesture == null) {
-            gesture = Gesture(Phase.PRESSED, at, now, at, now, emptyList())
+            gesture = Gesture(++lastGestureId, Phase.PRESSED, at, now, at, now, emptyList())
         }
         return MapResult()
     }
@@ -166,7 +168,7 @@ class GestureMapper {
         val path = (listOf(g.lastEmitted) + g.pending).map { toPx(it, d) }
         val duration = (now - g.lastEmitMs).coerceIn(1L, MAX_SEGMENT_MS)
         val next = g.copy(lastEmitted = g.pending.lastOrNull() ?: g.lastEmitted, lastEmitMs = now, pending = emptyList())
-        return Action.Drag(path, duration, continuing) to next
+        return Action.Drag(path, duration, continuing, g.id) to next
     }
 
     private fun scroll(o: JsonObject, d: Display): MapResult {

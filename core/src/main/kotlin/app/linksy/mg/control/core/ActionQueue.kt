@@ -15,8 +15,15 @@ import kotlin.math.hypot
  *   stroke is never dropped by the cap. It takes one extra slot (bounded, since only one stroke can
  *   be open and at most one release is queued), so the finger is not left down and no ordinary
  *   entry is evicted.
- * - A terminal drag (button-up) for a stroke that was replaced or lost (a wheel swipe, tap, or a
- *   rejected/cancelled stroke) with no move since is dropped: it must never become a new touch.
+ * - Stroke loss is tracked per logical gesture ([Action.Drag.gestureId]), never globally. The rule:
+ *   when the stroke that is held down is replaced (a dispatched Tap, LongPress or Swipe) or lost
+ *   ([strokeLost]: rejected or cancelled), the id of the gesture that owns it joins `lostGestures`
+ *   (a ring of the last [MAX_LOST]). A terminal drag (button-up) that does not close an open
+ *   stroke is dropped if and only if its own gestureId is in `lostGestures`; a lost id is
+ *   forgotten when that terminal is dropped or skipped, when a continuing move of that gesture is
+ *   admitted (it starts a fresh stroke, so the gesture is no longer lost) or dispatched, and on
+ *   [beginSession]/[endSession]. A terminal drag of any other gesture (an independent quick drag)
+ *   is never affected. The release of a stroke that is open is always kept (see above).
  * - A queued move (a continuing Drag) directly followed by another is coalesced into one. The merged
  *   path keeps the polyline (corners and reversals) down-sampled to [GestureMapper.MAX_PATH_POINTS]
  *   and the durations add up, capped at [GestureMapper.MAX_SEGMENT_MS]. Button, key, text, END and
@@ -40,11 +47,13 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
     private val items = ArrayDeque<Entry>()
     private var dispatchedEnd: Point? = null
 
-    /** The logical gesture's stroke was replaced or lost and no move has started a new one since. */
-    private var strokeGone = false
+    /** Gesture that owns the stroke currently held down (set when its move is dispatched). */
+    private var openGestureId: Long? = null
 
-    /** RED-PHASE STUB: replaced by the real lost-gesture set in the fix commit. */
-    val lostGestureCount: Int get() = Int.MAX_VALUE
+    /** Gestures whose stroke was replaced or lost and that have not started a new one; oldest first. */
+    private val lostGestures = LinkedHashSet<Long>()
+
+    val lostGestureCount: Int get() = lostGestures.size
 
     var generation = 0L
         private set
@@ -61,17 +70,17 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
         for (a in actions) {
             val last = items.lastOrNull()
             if (a is Action.Drag && isMove(a) && last != null && !last.release && last.generation == gen &&
-                last.action is Action.Drag && isMove(last.action)
+                last.action is Action.Drag && isMove(last.action) && last.action.gestureId == a.gestureId
             ) {
                 items[items.lastIndex] = last.copy(action = merge(last.action, a))
-                strokeGone = false
+                lostGestures.remove(a.gestureId)
             } else if (isTerminalDrag(a) && openStroke()) {
                 items.addLast(Entry(a, gen, release = true)) // may exceed maxQueue by this one release
-            } else if (isTerminalDrag(a) && strokeGone) {
-                strokeGone = false // the button-up of a gesture whose stroke is gone: not a new touch
+            } else if (a is Action.Drag && isTerminalDrag(a) && lostGestures.remove(a.gestureId)) {
+                // the button-up of a gesture whose stroke is gone: not a new touch
             } else if (items.size < maxQueue) {
                 items.addLast(Entry(a, gen))
-                if (isMove(a)) strokeGone = false // a dropped move must not clear the suppression
+                if (a is Action.Drag && isMove(a)) lostGestures.remove(a.gestureId) // only an admitted move
             }
         }
     }
@@ -100,7 +109,18 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
             path = prune(joined),
             durationMs = (first.durationMs + second.durationMs).coerceAtMost(GestureMapper.MAX_SEGMENT_MS),
             continuing = true,
+            gestureId = first.gestureId,
         )
+    }
+
+    private fun markLost() {
+        val id = openGestureId
+        if (dispatchedEnd != null && id != null) {
+            lostGestures.remove(id)
+            lostGestures.add(id)
+            while (lostGestures.size > MAX_LOST) lostGestures.remove(lostGestures.first())
+        }
+        openGestureId = null
     }
 
     /** Drops the points that bend the path least until at most MAX_PATH_POINTS remain; ends are kept. */
@@ -138,7 +158,7 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
 
     private fun restart() {
         generation++
-        strokeGone = false
+        lostGestures.clear()
         items.clear()
         val end = dispatchedEnd ?: return
         items.addLast(Entry(Action.Drag(listOf(end), 1, false), generation, release = true))
@@ -151,13 +171,17 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
             val a = e.action
             if (e.release) {
                 if (dispatchedEnd == null) {
-                    strokeGone = false // the gesture this release belonged to is over
+                    if (a is Action.Drag) lostGestures.remove(a.gestureId) // its gesture is over
                     continue // nothing is held any more
                 }
             } else if (e.generation != generation) continue
             if (replacesStroke(a)) {
-                if (dispatchedEnd != null) strokeGone = true
+                markLost()
                 dispatchedEnd = null
+            }
+            if (a is Action.Drag) {
+                lostGestures.remove(a.gestureId) // a fresh stroke or its end: nothing left to suppress
+                openGestureId = if (a.continuing) a.gestureId else null
             }
             return if (a is Action.Drag) bridge(a) else a
         }
@@ -165,7 +189,7 @@ class ActionQueue(private val maxQueue: Int = MAX_QUEUE) {
 
     /** The platform cancelled or rejected the stroke; the next drag segment starts a fresh one. */
     fun strokeLost() {
-        if (dispatchedEnd != null) strokeGone = true
+        markLost()
         dispatchedEnd = null
     }
 
