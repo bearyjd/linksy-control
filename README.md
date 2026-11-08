@@ -82,6 +82,11 @@ another window covers it (`filterTouchesWhenObscured`). Source: `app/.../BridgeP
 Build and test with Gradle 8.14 and JDK 17+: `gradle :core:test :app:assembleDebug`. Needs an Android
 SDK (platform 35) via `local.properties` (`sdk.dir=...`). No Gradle wrapper is checked in.
 
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) runs `gradle :core:test :app:assembleDebug :app:lintDebug`
+(JDK 17, Gradle 8.14.3) on every pull request and push to `main`. Actions are pinned to commit SHAs.
+
 ## Verification
 
 `core/` is unit tested (107 tests) and `app/` compiles and passes lint. Nothing has been run on a
