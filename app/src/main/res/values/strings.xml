@@ -2,9 +2,9 @@
 <resources>
     <string name="app_name">Linksy Control</string>
     <string name="service_label">Linksy Control</string>
-    <string name="service_description">Lets the Linksy app tap, swipe and type on this phone while you control it from your computer. It does nothing when no Linksy control session is running, and it never reads your screen.</string>
+    <string name="service_description">Lets the Linksy app tap, swipe and type on this phone while you control it from your computer. It does nothing when no Linksy control session is running. It does not watch your screen; it reads only the text field you are typing into (never password fields). Control also works on the lock screen.</string>
 
-    <string name="intro">Linksy Control lets you use this phone from your computer while Linksy mirrors its screen. It only taps, swipes, presses Back or Home, and types into the field you have selected, and only while you have started control from Linksy. It has no internet access and cannot send anything anywhere.</string>
+    <string name="intro">Linksy Control lets you use this phone from your computer while Linksy mirrors its screen. It only taps, swipes, presses Back or Home, and types into the field you have selected (it reads that field\'s current text to insert at the cursor, but skips password fields), and only while you have started control from Linksy. It has no internet permission itself. Because it can type and tap for the Linksy app, it can also act on the lock screen and inside other apps, so only approve Linksy on a phone you trust it with.</string>
     <string name="how_title">How to turn it on</string>
     <string name="how_steps">1. Tap \"Open Accessibility settings\" and turn on Linksy Control.\n2. On Android 13 and newer, if the switch is greyed out because you installed this app from a file, tap \"Open app info\", open the three-dot menu and choose \"Allow restricted settings\", then repeat step 1.\n3. In the Linksy app, start control and approve the pairing request shown here.\nIf your phone does not allow this, Linksy still mirrors the screen and can type through the Linksy keyboard.</string>
     <string name="status_title">Status</string>

@@ -23,11 +23,13 @@ class PairActivity : Activity() {
             finish()
             return
         }
-        AlertDialog.Builder(this)
+        // Tapjacking: ignore touches while another window covers this one (activity and dialog).
+        window.decorView.filterTouchesWhenObscured = true
+        val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.pair_title)
             .setMessage(getString(R.string.pair_message, pkg))
             .setPositiveButton(R.string.pair_allow) { _, _ ->
-                Graph.approvals(this).approve(pkg, certs.first())
+                Graph.approvals(this).approve(pkg, auth.matchedCert(certs) ?: return@setPositiveButton)
                 setResult(RESULT_OK)
                 finish()
             }
@@ -39,6 +41,8 @@ class PairActivity : Activity() {
                 setResult(RESULT_CANCELED)
                 finish()
             }
-            .show()
+            .create()
+        dialog.window?.decorView?.filterTouchesWhenObscured = true
+        dialog.show()
     }
 }

@@ -54,6 +54,9 @@ class SettingsActivity : Activity() {
             text(getString(R.string.paired_app, pkg))
             button(R.string.revoke) {
                 approvals.revoke(pkg)
+                // Revoking ends a live session now, not at the next message.
+                ControlBridgeService.instance?.onRevoked()
+                ControlAccessibilityService.instance?.endSession()
                 render()
             }
         }

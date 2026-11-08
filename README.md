@@ -4,15 +4,22 @@ A small, native Android companion for [Linksy](https://github.com/LinkSy-mg). It
 turn it on, let the Linksy app tap, swipe, press Back/Home and type on your phone while you control
 it from your computer. Application id `app.linksy.mg.control`. No Flutter, no network access.
 
-Status: early, built without a phone to test on. See "Verification" below.
+Status: early. **This app has never been run on a device**; it was built and reviewed without a phone. See "Verification" below.
 
 ## What it can and cannot do
 
 Can: tap, long-press, drag, scroll (swipes), Back (right click / Esc), Home (middle click / Super),
 type into the focused text field, press the keyboard's action key.
 
-Cannot: multi-touch, see or record your screen, read other apps' content, use the internet, run
-without you enabling it in Android Settings, or act when no Linksy control session is running.
+Cannot: multi-touch, record or capture your screen, open network connections itself (no INTERNET
+permission), run without you enabling it in Android Settings, or act when no Linksy control
+session is running.
+
+Does read: the text of the one focused input field, when you type from the computer (to insert at the
+cursor). It skips fields Android marks as passwords; a field that shows its password in clear
+(`VISIBLE_PASSWORD` inputs) may not be marked and can be read. It subscribes to no accessibility
+events. Injection also works while the phone is locked or in any app, like a person tapping it, and
+whatever other apps then do with that input (including sending data) is out of this app's hands.
 
 ## Ground rule
 
@@ -44,13 +51,19 @@ Contract (for the Linksy client): bind explicit component `app.linksy.mg.control
 `Message.what` 1 = BEGIN (reply `what=100`, `arg1` = 0 ok, 1 pairing disabled, 2 wrong package,
 3 wrong cert, 4 not approved, 5 accessibility off), 2 = END, 3 = INJECT with `Bundle` string `json`
 holding one Linksy `ControlMsg` (`pointer`, `button`, `scroll`, `key`, `text`; fractions 0..1). The
-sender uid of every message is re-checked; input outside BEGIN..END is ignored; a session ends after
-60 s idle or 30 min total. Source: `app/.../BridgeProtocol.kt`.
+sender uid of every message is checked against the open session, and the user's approval is re-read
+from the approval store on every message (INJECT included), so revoking it in Settings ends a live
+session at once. Input outside BEGIN..END is ignored. A session ends on END, after 60 s idle, after
+30 min total, on revoke, when the BEGIN caller's process dies, or when the bridge is unbound.
+BEGIN needs `Message.replyTo` (it is answered there). Messages are rate limited per uid (token
+bucket) before any package or certificate lookup, and at most 32 ordinary actions wait to run; END
+drops them and keeps only the release of a held finger. The pairing dialog ignores touches while
+another window covers it (`filterTouchesWhenObscured`). Source: `app/.../BridgeProtocol.kt`.
 
 ## Layout
 
 - `core/`: pure Kotlin/JVM, all logic and tests (`GestureMapper`, `CallerAuth`, `SessionGate`,
-  `TextEdit`, `ControlEngine`).
+  `TextEdit`, `ControlEngine`, `ActionQueue`, `BridgeSession`, `UidRateLimiter`).
 - `app/`: thin Android glue (Accessibility service, bridge service, settings and pairing screens).
 
 Build and test with Gradle 8.14 and JDK 17+: `gradle :core:test :app:assembleDebug`. Needs an Android
@@ -58,8 +71,8 @@ SDK (platform 35) via `local.properties` (`sdk.dir=...`). No Gradle wrapper is c
 
 ## Verification
 
-`core/` is unit tested (70 tests) and `app/` compiles and passes lint. Nothing has been run on a
-device: the Accessibility behavior (gestures, set-text, pairing screen, binding) is UNVERIFIED.
+`core/` is unit tested (93 tests) and `app/` compiles and passes lint. Nothing has been run on a
+device, ever: the Accessibility behavior (gestures, set-text, pairing screen, binding) is UNVERIFIED.
 
-See `PRIVACY.md` and `CHANGELOG.md`. No LICENSE file yet: the Linksy desktop repo is AGPL-3.0 but the
+See `PRIVACY.md`, `CHANGELOG.md` and `docs/REVIEWS.md`. No LICENSE file yet: the Linksy desktop repo is AGPL-3.0 but the
 mobile repo states none, so the choice is left to the maintainer.

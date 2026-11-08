@@ -14,6 +14,7 @@ import android.view.Display.DEFAULT_DISPLAY
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import app.linksy.mg.control.core.Action
+import app.linksy.mg.control.core.ActionQueue
 import app.linksy.mg.control.core.ControlEngine
 import app.linksy.mg.control.core.Display
 import app.linksy.mg.control.core.Point
@@ -26,14 +27,18 @@ import app.linksy.mg.control.core.TextEdit
 class ControlAccessibilityService : AccessibilityService() {
     private val main = Handler(Looper.getMainLooper())
     private val engine = ControlEngine(SystemClock::elapsedRealtime)
-    private val queue = ArrayDeque<Action>()
+    private val queue = ActionQueue()
     private var inFlight = false
     private var lastStroke: StrokeDescription? = null
 
     private val tick = object : Runnable {
         override fun run() {
-            enqueue(engine.tick(display()))
-            if (engine.isActive()) main.postDelayed(this, TICK_MS)
+            if (engine.isActive()) {
+                enqueue(engine.tick(display())) // may release a held stroke after a display change
+                main.postDelayed(this, TICK_MS)
+            } else {
+                finish(engine.tick(display())) // timed out: drop queued input, keep the release
+            }
         }
     }
 
@@ -55,23 +60,26 @@ class ControlAccessibilityService : AccessibilityService() {
 
     fun beginSession() {
         engine.begin()
-        queue.clear()
-        lastStroke = null
+        // A pending release from a replaced session stays queued, and lastStroke stays with it.
+        queue.beginSession()
         main.removeCallbacks(tick)
         main.postDelayed(tick, TICK_MS)
     }
 
     fun endSession() {
         main.removeCallbacks(tick)
-        enqueue(engine.end(display()))
+        finish(engine.end(display()))
     }
 
     fun inject(json: String) {
         val result = engine.inject(json, display())
-        enqueue(result.actions) // rejected input is dropped silently; never logged (may hold typed text)
+        // Rejected input is dropped silently; never logged (may hold typed text).
         if (engine.isActive()) {
+            enqueue(result.actions)
             main.removeCallbacks(tick)
             main.postDelayed(tick, TICK_MS)
+        } else {
+            finish(result.actions)
         }
     }
 
@@ -83,17 +91,19 @@ class ControlAccessibilityService : AccessibilityService() {
     }
 
     private fun enqueue(actions: List<Action>) {
-        for (a in actions) {
-            // Bound the backlog: drop mid-drag segments first, never the closing one.
-            if (queue.size >= MAX_QUEUE && a is Action.Drag && a.continuing) continue
-            queue.addLast(a)
-        }
+        queue.enqueue(actions)
+        pump()
+    }
+
+    /** The session is over: queued ordinary input is dropped; only [releases] and earlier releases run. */
+    private fun finish(releases: List<Action>) {
+        queue.endSession(releases)
         pump()
     }
 
     private fun pump() {
         while (!inFlight) {
-            val a = queue.removeFirstOrNull() ?: return
+            val a = queue.next() ?: return
             when (a) {
                 is Action.Tap -> gesture(strokeOf(listOf(a.at), TAP_MS, false, fresh = true))
                 is Action.LongPress -> gesture(strokeOf(listOf(a.at), a.durationMs, false, fresh = true))
@@ -125,6 +135,7 @@ class ControlAccessibilityService : AccessibilityService() {
             override fun onCompleted(g: GestureDescription?) = done()
             override fun onCancelled(g: GestureDescription?) {
                 lastStroke = null // a cancelled stroke cannot be continued
+                queue.strokeLost()
                 done()
             }
         }
@@ -138,14 +149,26 @@ class ControlAccessibilityService : AccessibilityService() {
         pump()
     }
 
-    private fun focusedField(): AccessibilityNodeInfo? {
-        val node = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return null
-        // Never write into or read from password fields.
-        return if (node.isEditable && !node.isPassword) node else null
+    /** Runs [block] on the focused, editable, non-password field (never password fields), then recycles. */
+    private fun <T> withFocusedField(block: (AccessibilityNodeInfo) -> T): T? {
+        val root = rootInActiveWindow ?: return null
+        var node: AccessibilityNodeInfo? = null
+        try {
+            node = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return null
+            return if (node.isEditable && !node.isPassword) block(node) else null
+        } finally {
+            if (android.os.Build.VERSION.SDK_INT < 33) { // recycle() is a no-op from 33 and deprecated
+                @Suppress("DEPRECATION") node?.recycle()
+                @Suppress("DEPRECATION") root.recycle()
+            }
+        }
     }
 
     private fun editFocused(edit: (String, Int, Int) -> app.linksy.mg.control.core.EditResult) {
-        val node = focusedField() ?: return
+        withFocusedField { node -> editNode(node, edit) }
+    }
+
+    private fun editNode(node: AccessibilityNodeInfo, edit: (String, Int, Int) -> app.linksy.mg.control.core.EditResult) {
         val current = if (node.isShowingHintText) "" else node.text?.toString() ?: ""
         val result = edit(current, node.textSelectionStart, node.textSelectionEnd)
         val set = Bundle().apply {
@@ -161,7 +184,7 @@ class ControlAccessibilityService : AccessibilityService() {
 
     private fun imeEnter() {
         if (android.os.Build.VERSION.SDK_INT < 30) return // no IME-action API before Android 11
-        focusedField()?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+        withFocusedField { it.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id) }
     }
 
     companion object {
@@ -171,6 +194,5 @@ class ControlAccessibilityService : AccessibilityService() {
 
         private const val TICK_MS = 5_000L
         private const val TAP_MS = 50L
-        private const val MAX_QUEUE = 32
     }
 }
