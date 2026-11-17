@@ -15,7 +15,7 @@ kotlin {
 
 dependencies {
     // Parsing only (parseToJsonElement); no compiler plugin, no reflection.
-    api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.13.0")
     testImplementation(kotlin("test"))
 }
 
